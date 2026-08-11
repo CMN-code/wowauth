@@ -49,6 +49,15 @@ on-activate = '''
     echo "Stable toolchain installed"
   fi
 
+  # diesel_cli isn't in nixpkgs in a sqlite-only build, so install it via
+  # cargo instead. sqlite-bundled compiles SQLite from vendored source, so
+  # this needs no system sqlite package.
+  if ! command -v diesel >/dev/null 2>&1; then
+    echo "Installing diesel_cli..."
+    cargo install diesel_cli --no-default-features --features sqlite-bundled
+    echo "diesel_cli installed"
+  fi
+
   echo "You are now floxed up!"
   echo "-> Run 'just' to see all available commands."
   echo "Rust: $(rustc --version)"

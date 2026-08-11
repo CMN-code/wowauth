@@ -19,6 +19,12 @@ target/
 !.env.example
 !.env.toml
 
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+
 *temp
 bq.json
 *key.json

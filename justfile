@@ -31,6 +31,29 @@ run:
     @cargo run
 
 #
+# Database
+#
+# The app applies pending migrations itself on every startup, so these are
+# only needed for local schema work: scaffolding a migration and keeping
+# src/schema.rs in sync while you write it.
+
+# Scaffolds a new migration; fill in the generated up.sql/down.sql, then run `just db-migrate`.
+db-new name:
+    @diesel migration generate {{ name }}
+
+# Applies pending migrations and regenerates src/schema.rs to match.
+db-migrate:
+    @diesel migration run
+
+# Reverts and re-runs the latest migration, to check that down.sql actually works.
+db-redo:
+    @diesel migration redo
+
+# Drops and recreates the local database from scratch.
+db-reset:
+    @diesel database reset
+
+#
 # Housekeeping
 #
 

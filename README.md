@@ -1,4 +1,5 @@
 # wowauth
+
 Wow, this standalone service does OAuth for you.
 
 ## Development
@@ -7,3 +8,7 @@ Wow, this standalone service does OAuth for you.
 flox activate
 just
 ```
+
+## Docs
+
+You can find the relevant files in the /docs folder, starting with the /docs/DESCRIPTION.md file.
