@@ -45,17 +45,29 @@ URIs the `/oauth/*` facade will accept back from calling clients.
 
 ### `oauth_flows`
 
-The authorization code flow is split across a browser redirect: wowauth
-starts a flow, the user's browser goes off to the provider, and later comes
-back with a `code` and `state`. This table is the memory that bridges those
-two requests — the CSRF `state` token and the PKCE `code_verifier` have to
-survive somewhere between "redirect out" and "callback in."
+The authorization code flow is split across a browser redirect, and wowauth
+sits in the middle of *two* such flows at once: it's the client on the
+upstream leg (talking to the real provider) and the "server" on the
+downstream leg (talking to whatever called `/oauth/auth`). This table is
+the memory that bridges all of that — `state`/`pkce_verifier` are the
+upstream-leg values wowauth generated itself; `caller_state`/
+`caller_code_challenge` are the matching downstream-leg values.
 
-Each row is meant to be single-use and short-lived (`expires_at`); the
-callback handler should delete it as soon as it's consumed, so a `code`/
-`state` pair can never be replayed. Keeping this separate from `tokens`
-matters: a row here is a live, CSRF-sensitive secret mid-flight, not yet a
-granted credential, and it should never be mistaken for one.
+A row lives through two phases. First, pending: between `/oauth/auth`
+redirecting out and `/oauth/callback` receiving the provider's redirect
+back. Each row is single-use and short-lived (`expires_at`), so a `state`
+can never be replayed. Second, once the upstream exchange succeeds, the
+*same* row is updated in place (`issued_code`/`token_id` get set, and
+`expires_at` shortens to ~60s) rather than deleted — it now represents a
+single-use code redeemable at `/oauth/token` for the resulting `tokens`
+row, instead of a pending authorization attempt. Reusing the row this way
+keeps a single expiry/single-use model for both phases rather than needing
+two.
+
+Keeping this separate from `tokens` matters throughout: a row here is
+either a live, CSRF-sensitive secret mid-flight or a short-lived claim
+check, never a long-lived granted credential, and it should never be
+mistaken for one.
 
 ### `tokens`
 
@@ -83,17 +95,31 @@ caller registers so wowauth can encrypt tokens to it (only their matching
 private key can decrypt them), so there's no confidentiality requirement
 for wowauth's own storage of it.
 
-## What's built vs. what's next
+## The `/oauth/*` facade
 
-Done and tested: the schema/migrations, at-rest encryption, connection
-pooling, and the full management API from `docs/DESCRIPTION.md` — app
-registration and updates, status, listing/deleting users, and issuing an
-HPKE-encrypted, auto-refreshed token for a user (`src/handlers.rs`), all
-gated by the `CONFIG_SECRET` bearer scheme (`src/auth.rs`) and exposed via
-`poem-openapi` with the spec served at `/docs/schema`.
+`src/oauth_handlers.rs` implements the standards-shaped surface from
+`docs/DESCRIPTION.md`: `/{app_id}/.well-known/openid-configuration`,
+`/{app_id}/oauth/auth`, `/{app_id}/oauth/callback` (not in the original
+list, but necessary — it's the fixed URI wowauth itself registers with the
+upstream provider as `apps.redirect_url`), `/{app_id}/oauth/token`, and
+`/{app_id}/oauth/revoke`. Unauthenticated by design, same as any real
+provider's equivalents — the request is documented in
+`docs/DESCRIPTION.md`.
 
-Not built yet: the `/oauth/*` facade itself (`/oauth/auth`, `/oauth/token`,
-`/oauth/revoke`, `/.well-known/openid-configuration`) — the standards-shaped
-endpoints that actually run the authorization-code flow against the
-upstream provider and populate `oauth_flows`/`tokens` in the first place.
-Until that lands, `tokens` rows only exist if inserted directly.
+Callers of this facade are treated as public clients: no client secret, PKCE
+(S256 only) required at `/oauth/auth` and verified at `/oauth/token`
+(`src/pkce.rs`), and `redirect_uri` checked against `apps.allowed_redirect_uris`
+before wowauth ever redirects anywhere. `/oauth/token` deliberately never
+returns a `refresh_token` — wowauth keeps that to itself and handles
+renewal server-side (the same auto-refresh the proprietary
+`/apps/.../token` endpoint uses, via `src/oauth_client.rs`), rather than
+handing a long-lived upstream credential to whichever downstream client
+happens to complete a given flow.
+
+## What's built
+
+The schema/migrations, at-rest encryption, connection pooling, the full
+management API, and the `/oauth/*` facade above — end to end, verified
+against a mock upstream provider: authorize → callback → code exchange →
+token, plus replay rejection, redirect_uri allow-list enforcement,
+auto-refresh, and revocation.

@@ -18,7 +18,7 @@ fn default_token_auth_method() -> String {
 
 /// `anyhow::Error` doesn't implement `std::error::Error` itself, so it can't
 /// go through `poem::error::InternalServerError` directly.
-fn internal_error(err: anyhow::Error) -> poem::Error {
+pub(crate) fn internal_error(err: anyhow::Error) -> poem::Error {
     poem::Error::from_string(
         err.to_string(),
         poem::http::StatusCode::INTERNAL_SERVER_ERROR,

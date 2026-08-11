@@ -4,8 +4,11 @@ use diesel::sqlite::SqliteConnection;
 use uuid::Uuid;
 
 use crate::crypto::Cipher;
-use crate::models::{App, AppChanges, NewApp, Token, TokenRefresh};
-use crate::schema::{apps, tokens};
+use crate::models::{
+    App, AppChanges, NewApp, NewOauthFlow, NewToken, OauthFlow, OauthFlowIssued, Token,
+    TokenRefresh,
+};
+use crate::schema::{apps, oauth_flows, tokens};
 
 pub struct CreateApp {
     pub name: String,
@@ -142,6 +145,146 @@ pub fn save_refreshed_token(
 
     diesel::update(tokens::table.find(token_id))
         .set(&changes)
+        .returning(Token::as_returning())
+        .get_result(conn)
+}
+
+pub struct CreateOauthFlow {
+    pub app_id: String,
+    /// CSRF state wowauth will send to the upstream provider.
+    pub state: String,
+    pub pkce_verifier: Vec<u8>,
+    pub redirect_after: String,
+    pub external_account_hint: Option<String>,
+    pub expires_at: NaiveDateTime,
+    pub caller_state: String,
+    pub caller_code_challenge: String,
+}
+
+pub fn create_oauth_flow(
+    conn: &mut SqliteConnection,
+    new: CreateOauthFlow,
+) -> QueryResult<OauthFlow> {
+    let record = NewOauthFlow {
+        id: Uuid::new_v4().to_string(),
+        app_id: new.app_id,
+        state: new.state,
+        pkce_verifier: new.pkce_verifier,
+        redirect_after: new.redirect_after,
+        external_account_hint: new.external_account_hint,
+        expires_at: new.expires_at,
+        caller_state: new.caller_state,
+        caller_code_challenge: new.caller_code_challenge,
+    };
+
+    diesel::insert_into(oauth_flows::table)
+        .values(&record)
+        .returning(OauthFlow::as_returning())
+        .get_result(conn)
+}
+
+/// Looks up a live (not necessarily unexpired — callers should check
+/// `expires_at` themselves) flow by the upstream CSRF state.
+pub fn get_oauth_flow_by_state(
+    conn: &mut SqliteConnection,
+    state: &str,
+) -> QueryResult<Option<OauthFlow>> {
+    oauth_flows::table
+        .filter(oauth_flows::state.eq(state))
+        .select(OauthFlow::as_select())
+        .first(conn)
+        .optional()
+}
+
+pub fn get_oauth_flow_by_code(
+    conn: &mut SqliteConnection,
+    code: &str,
+) -> QueryResult<Option<OauthFlow>> {
+    oauth_flows::table
+        .filter(oauth_flows::issued_code.eq(code))
+        .select(OauthFlow::as_select())
+        .first(conn)
+        .optional()
+}
+
+pub fn delete_oauth_flow(conn: &mut SqliteConnection, flow_id: &str) -> QueryResult<()> {
+    diesel::delete(oauth_flows::table.find(flow_id)).execute(conn)?;
+    Ok(())
+}
+
+/// Marks a flow as redeemable: the upstream exchange succeeded, so it now
+/// hands out a single-use code for the resulting user record instead of
+/// still being a pending authorization attempt. Codes are short-lived.
+pub fn mark_flow_issued(
+    conn: &mut SqliteConnection,
+    flow_id: &str,
+    issued_code: &str,
+    token_id: &str,
+) -> QueryResult<()> {
+    let changes = OauthFlowIssued {
+        issued_code: Some(issued_code.to_string()),
+        token_id: Some(token_id.to_string()),
+        // Long enough for a human to manually copy the code out of the
+        // browser's address bar into a terminal; still single-use and
+        // still bound to the original PKCE verifier, so this isn't a
+        // meaningful security relaxation over a shorter window.
+        expires_at: chrono::Utc::now().naive_utc() + chrono::Duration::minutes(5),
+    };
+    diesel::update(oauth_flows::table.find(flow_id))
+        .set(&changes)
+        .execute(conn)?;
+    Ok(())
+}
+
+/// Creates or updates the grant for `(app_id, external_account)`, keeping
+/// the same `id` (the "user id") across re-authorizations rather than
+/// minting a new one.
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_token(
+    conn: &mut SqliteConnection,
+    app_id: &str,
+    external_account: &str,
+    access_token: Vec<u8>,
+    refresh_token: Option<Vec<u8>>,
+    scopes: String,
+    expires_at: Option<NaiveDateTime>,
+    label: Option<String>,
+) -> QueryResult<Token> {
+    #[derive(AsChangeset)]
+    #[diesel(table_name = tokens)]
+    struct Update {
+        access_token: Vec<u8>,
+        refresh_token: Option<Vec<u8>>,
+        scopes: String,
+        expires_at: Option<NaiveDateTime>,
+        label: Option<String>,
+        updated_at: NaiveDateTime,
+    }
+
+    let new_token = NewToken {
+        id: Uuid::new_v4().to_string(),
+        app_id: app_id.to_string(),
+        external_account: external_account.to_string(),
+        access_token: access_token.clone(),
+        refresh_token: refresh_token.clone(),
+        scopes: scopes.clone(),
+        expires_at,
+        label: label.clone(),
+    };
+    let update = Update {
+        access_token,
+        refresh_token,
+        scopes,
+        expires_at,
+        label,
+        updated_at: chrono::Utc::now().naive_utc(),
+    };
+
+    diesel::insert_into(tokens::table)
+        .values(&new_token)
+        .on_conflict((tokens::app_id, tokens::external_account))
+        .do_update()
+        .set(&update)
         .returning(Token::as_returning())
         .get_result(conn)
 }

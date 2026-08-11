@@ -30,6 +30,10 @@ diesel::table! {
         external_account_hint -> Nullable<Text>,
         created_at -> Timestamp,
         expires_at -> Timestamp,
+        caller_state -> Text,
+        caller_code_challenge -> Text,
+        issued_code -> Nullable<Text>,
+        token_id -> Nullable<Text>,
     }
 }
 
@@ -49,6 +53,7 @@ diesel::table! {
 }
 
 diesel::joinable!(oauth_flows -> apps (app_id));
+diesel::joinable!(oauth_flows -> tokens (token_id));
 diesel::joinable!(tokens -> apps (app_id));
 
 diesel::allow_tables_to_appear_in_same_query!(apps, oauth_flows, tokens,);

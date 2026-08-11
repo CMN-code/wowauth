@@ -68,12 +68,20 @@ pub struct AppChanges {
 pub struct OauthFlow {
     pub id: String,
     pub app_id: String,
+    /// CSRF state wowauth sends to the upstream provider.
     pub state: String,
     pub pkce_verifier: Vec<u8>,
+    /// Where to send the caller once the flow completes.
     pub redirect_after: String,
     pub external_account_hint: Option<String>,
     pub created_at: NaiveDateTime,
     pub expires_at: NaiveDateTime,
+    /// CSRF state the caller sent wowauth, echoed back on completion.
+    pub caller_state: String,
+    /// The caller's own PKCE challenge, verified at `/oauth/token`.
+    pub caller_code_challenge: String,
+    pub issued_code: Option<String>,
+    pub token_id: Option<String>,
 }
 
 #[derive(Debug, Insertable)]
@@ -85,6 +93,19 @@ pub struct NewOauthFlow {
     pub pkce_verifier: Vec<u8>,
     pub redirect_after: String,
     pub external_account_hint: Option<String>,
+    pub expires_at: NaiveDateTime,
+    pub caller_state: String,
+    pub caller_code_challenge: String,
+}
+
+/// Marks a flow as completed on the upstream side: it now redeems to a
+/// specific user record via a single-use code, rather than the caller
+/// hitting a still-pending flow.
+#[derive(Debug, AsChangeset)]
+#[diesel(table_name = oauth_flows)]
+pub struct OauthFlowIssued {
+    pub issued_code: Option<String>,
+    pub token_id: Option<String>,
     pub expires_at: NaiveDateTime,
 }
 

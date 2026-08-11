@@ -4,6 +4,8 @@ mod db;
 mod handlers;
 mod models;
 mod oauth_client;
+mod oauth_handlers;
+mod pkce;
 mod repository;
 mod schema;
 mod token_seal;
@@ -25,6 +27,10 @@ struct AppState {
     pool: DbPool,
     cipher: Arc<Cipher>,
     config_secret: String,
+    /// Used to build absolute URLs in the OIDC discovery document (e.g.
+    /// `https://wowauth.example.com`), since relative URIs aren't valid
+    /// there.
+    public_base_url: String,
 }
 
 #[handler]
@@ -51,13 +57,22 @@ async fn main() -> anyhow::Result<()> {
     let cipher = Arc::new(Cipher::from_env()?);
     let config_secret =
         std::env::var("CONFIG_SECRET").context("CONFIG_SECRET must be set to a bearer secret")?;
+    let public_base_url = std::env::var("PUBLIC_BASE_URL")
+        .context("PUBLIC_BASE_URL must be set to this server's own public URL")?
+        .trim_end_matches('/')
+        .to_string();
     let state = AppState {
         pool,
         cipher,
         config_secret,
+        public_base_url,
     };
 
-    let api_service = OpenApiService::new(handlers::Api, "wowauth", env!("CARGO_PKG_VERSION"));
+    let api_service = OpenApiService::new(
+        (handlers::Api, oauth_handlers::OauthApi),
+        "wowauth",
+        env!("CARGO_PKG_VERSION"),
+    );
 
     let app = Route::new()
         .at("/health", get(health))

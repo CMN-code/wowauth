@@ -17,6 +17,12 @@ just.pkg-path = "just"
 just.outputs = "all"
 watchexec.pkg-path = "watchexec"
 
+# Used by docs/EXAMPLE.md: generating keys, calling the API, parsing responses
+openssl.pkg-path = "openssl"
+curl.pkg-path = "curl"
+jq.pkg-path = "jq"
+python3.pkg-path = "python3"
+
 # Platform-specific packages
 libiconv.pkg-path = "libiconv"
 libiconv.systems = ["aarch64-darwin", "x86_64-darwin"]
