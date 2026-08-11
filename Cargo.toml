@@ -10,10 +10,14 @@ repository = "https://github.com/CMN-code/wowauth"
 [dependencies]
 # Server & Runtime
 poem = "3.1.12"
+poem-openapi = { version = "5.1.16", features = ["chrono"] }
 tokio = { version = "1.0", features = ["full"] }
 
 # OAuth
 oauth2 = "5.0.0"
+# Matches oauth2's own reqwest dependency so cargo unifies to one build; used
+# directly so per-app extra headers can be applied via `default_headers`.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # Database
 diesel = { version = "2.3", features = ["sqlite", "r2d2", "chrono", "returning_clauses_for_sqlite_3_35"] }
@@ -23,6 +27,7 @@ libsqlite3-sys = { version = "0.38", features = ["bundled"] }
 
 # Crypto & IDs
 chacha20poly1305 = "0.11"
+hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 base64 = "0.22"
 uuid = { version = "1.0", features = ["v4"] }
 

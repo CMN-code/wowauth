@@ -52,11 +52,6 @@ impl Cipher {
     }
 
     /// Decrypts a `nonce || ciphertext` blob produced by [`Cipher::encrypt`].
-    ///
-    /// Not called yet: nothing reads a stored secret back out until the
-    /// authorize/callback/refresh handlers land, but it's exercised by the
-    /// tests below.
-    #[allow(dead_code)]
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.len() < NONCE_LEN {
             bail!("ciphertext too short to contain a nonce");

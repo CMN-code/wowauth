@@ -14,6 +14,7 @@ pub struct App {
     pub auth_url: String,
     pub token_url: String,
     pub redirect_url: String,
+    pub allowed_redirect_uris: String,
     pub scopes: String,
     pub token_auth_method: String,
     pub extra_auth_params: String,
@@ -33,11 +34,32 @@ pub struct NewApp {
     pub auth_url: String,
     pub token_url: String,
     pub redirect_url: String,
+    pub allowed_redirect_uris: String,
     pub scopes: String,
     pub token_auth_method: String,
     pub extra_auth_params: String,
     pub extra_headers: String,
     pub public_key: String,
+}
+
+/// Partial update for `PUT`/`PATCH /apps/{app_id}`. Every field is optional
+/// so callers can overwrite only what they mean to change.
+#[derive(Debug, Default, AsChangeset)]
+#[diesel(table_name = apps)]
+pub struct AppChanges {
+    pub name: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<Vec<u8>>,
+    pub auth_url: Option<String>,
+    pub token_url: Option<String>,
+    pub redirect_url: Option<String>,
+    pub allowed_redirect_uris: Option<String>,
+    pub scopes: Option<String>,
+    pub token_auth_method: Option<String>,
+    pub extra_auth_params: Option<String>,
+    pub extra_headers: Option<String>,
+    pub public_key: Option<String>,
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
@@ -79,6 +101,7 @@ pub struct Token {
     pub expires_at: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Insertable, AsChangeset)]
@@ -91,4 +114,15 @@ pub struct NewToken {
     pub refresh_token: Option<Vec<u8>>,
     pub scopes: String,
     pub expires_at: Option<NaiveDateTime>,
+    pub label: Option<String>,
+}
+
+/// Fields updated after a successful token refresh.
+#[derive(Debug, AsChangeset)]
+#[diesel(table_name = tokens)]
+pub struct TokenRefresh {
+    pub access_token: Vec<u8>,
+    pub refresh_token: Option<Vec<u8>>,
+    pub expires_at: Option<NaiveDateTime>,
+    pub updated_at: NaiveDateTime,
 }

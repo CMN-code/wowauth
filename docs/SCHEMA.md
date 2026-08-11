@@ -36,9 +36,12 @@ speaks textbook OAuth 2.0:
   header).
 
 `client_secret` is stored as an encrypted `BLOB`, not plaintext (see
-"Secrets" below). `public_key` is the caller-supplied key that tokens
-returned for this app get encrypted to — it's stored as plain text, since
-it's public by design.
+"Secrets" below). `public_key` is the caller-supplied X25519 public key that
+tokens returned for this app get HPKE-encrypted to (`src/token_seal.rs`) —
+it's stored as plain text, since it's public by design. `redirect_url` is
+wowauth's own callback registered with the upstream provider;
+`allowed_redirect_uris` (JSON array) is the separate allow-list of redirect
+URIs the `/oauth/*` facade will accept back from calling clients.
 
 ### `oauth_flows`
 
@@ -57,11 +60,14 @@ granted credential, and it should never be mistaken for one.
 ### `tokens`
 
 The actual credential vault — one row per end-user account that has
-completed authorization under a given app. A single app (one client_id/
-secret pair at a provider) can have many independently-authorized accounts,
-so tokens are keyed by `(app_id, external_account)` rather than by app
-alone; re-authorizing the same account updates its row instead of creating
-an ambiguous duplicate.
+completed authorization under a given app; this is also the "user" the
+management API's `/apps/{app_id}/users/...` endpoints operate on, keyed by
+`tokens.id`. A single app (one client_id/secret pair at a provider) can have
+many independently-authorized accounts, so tokens are keyed by
+`(app_id, external_account)` rather than by app alone; re-authorizing the
+same account updates its row instead of creating an ambiguous duplicate.
+`label` is an optional human-readable name/email for the account, captured
+from the provider during authorization when available.
 
 ## Secrets
 
@@ -80,10 +86,14 @@ for wowauth's own storage of it.
 ## What's built vs. what's next
 
 Done and tested: the schema/migrations, at-rest encryption, connection
-pooling, and app registration (`POST /apps`, `GET /apps/:name`).
+pooling, and the full management API from `docs/DESCRIPTION.md` — app
+registration and updates, status, listing/deleting users, and issuing an
+HPKE-encrypted, auto-refreshed token for a user (`src/handlers.rs`), all
+gated by the `CONFIG_SECRET` bearer scheme (`src/auth.rs`) and exposed via
+`poem-openapi` with the spec served at `/docs/schema`.
 
-`docs/DESCRIPTION.md` describes a considerably larger surface on top of
-this — per-app OAuth-facade endpoints (`/oauth/auth`, `/oauth/token`, ...),
-a `users` sub-resource per app, bearer-auth-gated management endpoints, and
-an OpenAPI schema via `poem-openapi`. None of that is built yet; today's
-work is the storage layer it all sits on.
+Not built yet: the `/oauth/*` facade itself (`/oauth/auth`, `/oauth/token`,
+`/oauth/revoke`, `/.well-known/openid-configuration`) — the standards-shaped
+endpoints that actually run the authorization-code flow against the
+upstream provider and populate `oauth_flows`/`tokens` in the first place.
+Until that lands, `tokens` rows only exist if inserted directly.

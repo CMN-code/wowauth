@@ -16,6 +16,7 @@ diesel::table! {
         public_key -> Text,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        allowed_redirect_uris -> Text,
     }
 }
 
@@ -43,6 +44,7 @@ diesel::table! {
         expires_at -> Nullable<Timestamp>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        label -> Nullable<Text>,
     }
 }
 
