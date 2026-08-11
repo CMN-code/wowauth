@@ -1,0 +1,20 @@
+{
+  "name": "isolated-dev",
+  "build": { "dockerfile": "Dockerfile", "context": "." },
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+  },
+
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "overrideCommand": true,
+
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
+
+  "customizations": { "zed": { "extensions": [] } },
+}

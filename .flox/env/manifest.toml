@@ -1,0 +1,61 @@
+schema-version = "1.12.0"
+minimum-cli-version = "1.12.0"
+
+
+[install]
+# Build tools
+gcc.pkg-path = "gcc"
+gcc.outputs = "all"
+cargo-nextest.pkg-path = "cargo-nextest"
+
+# Rustup manages our rust toolchain, not flox
+# but it will install it project-locally for us
+rustup.pkg-path = "rustup"
+
+# Useful development tools
+just.pkg-path = "just"
+just.outputs = "all"
+watchexec.pkg-path = "watchexec"
+
+# Platform-specific packages
+libiconv.pkg-path = "libiconv"
+libiconv.systems = ["aarch64-darwin", "x86_64-darwin"]
+libiconv.outputs = "all"
+
+## Environment Variables ---------------------------------------------
+##  ... available for use in the activated environment
+##      as well as [hook], [profile] scripts and [services] below.
+## -------------------------------------------------------------------
+[vars]
+# This makes cargo installation local to the flox environment
+CARGO_HOME = "$FLOX_ENV_PROJECT/.flox/cache/cargo"
+RUSTUP_HOME = "$FLOX_ENV_PROJECT/.flox/cache/rustup"
+
+PATH = "$CARGO_HOME/bin:$PATH"
+
+## Activation Hook ---------------------------------------------------
+##  ... run by _bash_ shell when you run 'flox activate'.
+## -------------------------------------------------------------------
+[hook]
+on-activate = '''
+  # Fix for cargo issues with LD_AUDIT on flox (https://github.com/flox/flox/issues/1341#issuecomment-2067207817)
+  unset LD_AUDIT
+
+  # Install stable toolchain if not present
+  if [ ! -d "$RUSTUP_HOME/toolchains" ]; then
+    echo "Installing stable toolchain to project directory..."
+    rustup toolchain install stable
+    rustup default stable
+    echo "Stable toolchain installed"
+  fi
+
+  echo "You are now floxed up!"
+  echo "-> Run 'just' to see all available commands."
+  echo "Rust: $(rustc --version)"
+'''
+
+[profile]
+[services]
+[include]
+[build]
+[options]
