@@ -1,14 +1,13 @@
-use chrono::NaiveDateTime;
-use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
-use uuid::Uuid;
-
 use crate::crypto::Cipher;
 use crate::models::{
     App, AppChanges, NewApp, NewOauthFlow, NewToken, OauthFlow, OauthFlowIssued, Token,
     TokenRefresh,
 };
 use crate::schema::{apps, oauth_flows, tokens};
+use chrono::NaiveDateTime;
+use diesel::prelude::*;
+use diesel::sqlite::SqliteConnection;
+use uuid::Uuid;
 
 pub struct CreateApp {
     pub name: String,

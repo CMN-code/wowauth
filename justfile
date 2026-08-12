@@ -33,9 +33,9 @@ run:
 #
 # Database
 #
-# The app applies pending migrations itself on every startup, so these are
+# Pending migrations are applied at startup always, so these are
 # only needed for local schema work: scaffolding a migration and keeping
-# src/schema.rs in sync while you write it.
+# src/schema.rs in sync
 
 # Scaffolds a new migration; fill in the generated up.sql/down.sql, then run `just db-migrate`.
 db-new name:

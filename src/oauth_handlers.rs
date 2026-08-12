@@ -1,13 +1,12 @@
+use crate::AppState;
+use crate::handlers::internal_error;
+use crate::{oauth_client, pkce, repository};
 use chrono::Utc;
 use poem::web::Data;
 use poem_openapi::param::{Path, Query};
 use poem_openapi::payload::{Form, Json, PlainText};
 use poem_openapi::{ApiResponse, Object, OpenApi};
 use uuid::Uuid;
-
-use crate::AppState;
-use crate::handlers::internal_error;
-use crate::{oauth_client, pkce, repository};
 
 #[derive(Object)]
 struct Discovery {

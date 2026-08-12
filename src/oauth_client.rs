@@ -1,7 +1,5 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::time::Duration;
-
+use crate::crypto::Cipher;
+use crate::models::App;
 use anyhow::{Context, Result};
 use oauth2::basic::BasicClient;
 use oauth2::{
@@ -10,9 +8,9 @@ use oauth2::{
     TokenResponse, TokenUrl,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-
-use crate::crypto::Cipher;
-use crate::models::App;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::time::Duration;
 
 type TokenClient =
     BasicClient<EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;

@@ -4,9 +4,7 @@ use poem_openapi::auth::Bearer;
 
 use crate::AppState;
 
-/// Gates every management endpoint. The secret is flat across all apps by
-/// design: wowauth is only ever operated by admins within the same
-/// company, so every app is trusted at the same level.
+/// Gates every management endpoint. The secret is flat across all apps
 #[derive(SecurityScheme)]
 #[oai(ty = "bearer", checker = "check_bearer")]
 pub struct AdminAuth(());

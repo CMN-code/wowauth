@@ -11,4 +11,6 @@ just
 
 ## Docs
 
-You can find the relevant files in the /docs folder, starting with the /docs/DESCRIPTION.md file.
+- You can find the relevant files in the /docs folder, starting with the /docs/DESCRIPTION.md file (human-written)
+- Examples are in /docs/examples (agent-written)
+- The DB schema is partially described in /docs/SCHEMA.md (agent-written)
