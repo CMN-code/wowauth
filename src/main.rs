@@ -10,6 +10,7 @@ mod repository;
 mod schema;
 mod token_seal;
 
+use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -76,11 +77,14 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Route::new()
         .at("/health", get(health))
-        .at("/docs/schema", api_service.spec_endpoint())
+        .nest("/docs/schema", api_service.spec_endpoint())
+        .nest("/docs/scalar", api_service.scalar())
         .nest("/", api_service)
         .data(state);
 
     // Linux binds this dual-stack by default (net.ipv6.bindv6only=0), so it also accepts IPv4.
-    Server::new(TcpListener::bind("[::]:3000")).run(app).await?;
+    let port = 3000;
+    let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
+    Server::new(TcpListener::bind(addr)).run(app).await?;
     Ok(())
 }

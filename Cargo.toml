@@ -10,7 +10,7 @@ repository = "https://github.com/CMN-code/wowauth"
 [dependencies]
 # Server & Runtime
 poem = "3.1.12"
-poem-openapi = { version = "5.1.16", features = ["chrono"] }
+poem-openapi = { version = "5.1.16", features = ["chrono", "scalar"] }
 tokio = { version = "1.0", features = ["full"] }
 
 # OAuth
