@@ -19,6 +19,21 @@ fix:
 test:
     @cargo nextest run
 
+# End-to-end integration tests: spawns a real wowauth instance against a throwaway
+# SQLite file plus a mock upstream OAuth provider, then drives real HTTP requests
+# against it. See tests/INTEGRATION_TESTING.md. Needs bun (`flox activate` provides it).
+integration-test:
+    cd tests && bun run ci
+
+# Same, without reinstalling deps or regenerating the OpenAPI client -- for iterating.
+integration-test-fast test_name="":
+    cd tests && bunx vitest run {{ test_name }}
+
+# Interactive, narrated setup wizard for connecting a Nmbrs account to a running
+# wowauth instance -- see docs/examples/nmbrs-setup.ts and docs/examples/NMBRS.md.
+nmbrs-setup:
+    @bun run docs/examples/nmbrs-setup.ts
+
 #
 # Development
 #

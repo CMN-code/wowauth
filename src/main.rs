@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use poem::web::{Data, Json};
-use poem::{EndpointExt, Route, Server, get, handler, listener::TcpListener};
+use poem::{Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener};
 use poem_openapi::OpenApiService;
 use serde_json::{Value, json};
 use tracing_subscriber::EnvFilter;
@@ -80,10 +80,30 @@ async fn main() -> anyhow::Result<()> {
         .nest("/docs/schema", api_service.spec_endpoint())
         .nest("/docs/scalar", api_service.scalar())
         .nest("/", api_service)
-        .data(state);
+        .data(state)
+        // Audit trail: every request wowauth handles logs its method, path, and
+        // outcome. `path` alone captures which app/user a call touched, since
+        // both ids are path segments (e.g. /apps/{app_id}/users/{user_id}/token)
+        // -- deliberately never the query string or headers, so a PKCE
+        // verifier/state or the CONFIG_SECRET bearer never ends up in logs.
+        .around(|ep, req| async move {
+            let method = req.method().clone();
+            let path = req.uri().path().to_string();
+            let res = ep.call(req).await;
+            match &res {
+                Ok(resp) => tracing::info!(%method, %path, status = %resp.status()),
+                Err(err) => tracing::warn!(%method, %path, status = %err.status()),
+            }
+            res
+        });
 
+    // Overridable so the integration test suite can run its own instance
+    // alongside a dev server without a port clash.
+    let port: u16 = std::env::var("LISTEN_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
     // Linux binds this dual-stack by default (net.ipv6.bindv6only=0), so it also accepts IPv4.
-    let port = 3000;
     let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
     Server::new(TcpListener::bind(addr)).run(app).await?;
     Ok(())

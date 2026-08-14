@@ -1,0 +1,19 @@
+{
+  "name": "wowauth-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "bun run scripts/generate.ts",
+    "test": "vitest run",
+    "ci": "bun install && bun run generate && bun run test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "hpke-js": "^1.8.0",
+    "openapi-fetch": "^0.17.0",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}
