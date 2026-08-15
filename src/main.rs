@@ -23,6 +23,12 @@ use tracing_subscriber::EnvFilter;
 use crate::crypto::Cipher;
 use crate::db::DbPool;
 
+// Avoid musl's default allocator due to lackluster performance
+// https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Clone)]
 struct AppState {
     pool: DbPool,

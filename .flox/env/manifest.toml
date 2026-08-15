@@ -3,14 +3,23 @@ minimum-cli-version = "1.12.0"
 
 
 [install]
-# Build tools
+
+# Rust toolchain, yes this version number is for the entire toolchain!
+rust-toolchain.flake = "path:./nix/rust-toolchain#rust-1_96_0"
+
+# Build dependencies
 gcc.pkg-path = "gcc"
 gcc.outputs = "all"
-cargo-nextest.pkg-path = "cargo-nextest"
-
-# Rustup manages our rust toolchain, not flox
-# but it will install it project-locally for us
-rustup.pkg-path = "rustup"
+gcc.systems = ["aarch64-linux", "x86_64-linux"]
+libiconv.pkg-path = "libiconv"
+libiconv.systems = ["aarch64-darwin", "x86_64-darwin"]
+libiconv.outputs = "all"
+clang.pkg-path = "clang"
+clang.systems = ["aarch64-darwin", "x86_64-darwin"]
+pkg-config.pkg-path = "pkg-config"
+pkg-config.outputs = "all"
+openssl.pkg-path = "openssl"
+openssl.outputs = "all"
 
 # Useful development tools
 just.pkg-path = "just"
@@ -18,15 +27,12 @@ just.outputs = "all"
 watchexec.pkg-path = "watchexec"
 
 # Used by docs/EXAMPLE.md: generating keys, calling the API, parsing responses
-openssl.pkg-path = "openssl"
 curl.pkg-path = "curl"
 jq.pkg-path = "jq"
 python3.pkg-path = "python3"
 
 # Platform-specific packages
-libiconv.pkg-path = "libiconv"
-libiconv.systems = ["aarch64-darwin", "x86_64-darwin"]
-libiconv.outputs = "all"
+
 
 ## Environment Variables ---------------------------------------------
 ##  ... available for use in the activated environment
@@ -37,23 +43,24 @@ libiconv.outputs = "all"
 CARGO_HOME = "$FLOX_ENV_PROJECT/.flox/cache/cargo"
 RUSTUP_HOME = "$FLOX_ENV_PROJECT/.flox/cache/rustup"
 
-PATH = "$CARGO_HOME/bin:$PATH"
-
 ## Activation Hook ---------------------------------------------------
 ##  ... run by _bash_ shell when you run 'flox activate'.
 ## -------------------------------------------------------------------
 [hook]
 on-activate = '''
+
+  export PATH="$CARGO_HOME/bin:$PATH"
+
   # Fix for cargo issues with LD_AUDIT on flox (https://github.com/flox/flox/issues/1341#issuecomment-2067207817)
   unset LD_AUDIT
 
   # Install stable toolchain if not present
-  if [ ! -d "$RUSTUP_HOME/toolchains" ]; then
-    echo "Installing stable toolchain to project directory..."
-    rustup toolchain install stable
-    rustup default stable
-    echo "Stable toolchain installed"
-  fi
+  # if [ ! -d "$RUSTUP_HOME/toolchains" ]; then
+  #   echo "Installing stable toolchain to project directory..."
+  #   rustup toolchain install stable
+  #   rustup default stable
+  #   echo "Stable toolchain installed"
+  # fi
 
   # diesel_cli isn't in nixpkgs in a sqlite-only build, so install it via
   # cargo instead. sqlite-bundled compiles SQLite from vendored source, so
@@ -64,13 +71,23 @@ on-activate = '''
     echo "diesel_cli installed"
   fi
 
-  echo "You are now floxed up!"
   echo "-> Run 'just' to see all available commands."
-  echo "Rust: $(rustc --version)"
+  echo "Rust:   $(rustc --version)"
 '''
 
 [profile]
 [services]
 [include]
 [build]
+
+[build.wowauth]
+command = '''
+  just build
+  mkdir -p $out/bin
+  cp target/x86_64-unknown-linux-musl/release/wowauth $out/bin/wowauth
+'''
+version = "0.0.1"
+description = "Wow, OAuth so simple!"
+sandbox = "off"
+
 [options]

@@ -51,3 +51,6 @@ kubeconfig.yaml
 
 utils/cfr
 *.pem
+
+
+result-*
