@@ -32,6 +32,11 @@ package: flox-build
     @echo "Tagging image with: '{{ image }}:{{ commit_hash }} {{ image }}:latest'"
     docker tag {{ image }}:{{ commit_hash }} {{ image }}:latest
 
+# Build, package and push to GHCR
+release: package
+    docker push {{ image }}:{{ commit_hash }}
+    docker push {{ image }}:latest
+
 package-run tag="latest":
     docker run --rm -it -p 3000:3000 ghcr.io/cmn-code/fuse/wowauth:{{tag}}
 

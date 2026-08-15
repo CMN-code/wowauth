@@ -5,7 +5,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --home-dir /home/runner --shell /bin/bash --uid 10001 runner
 
-RUN mkdir -p /home/runner/bin
+RUN mkdir -p /home/runner/bin /home/runner/data
 COPY build/artifacts/wowauth /home/runner/bin/wowauth
 RUN chown -R runner:runner /home/runner
 
