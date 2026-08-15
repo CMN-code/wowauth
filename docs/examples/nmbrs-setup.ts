@@ -26,7 +26,6 @@
 
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { createServer } from "node:http";
 import { createInterface } from "node:readline/promises";
 
 // ---------------------------------------------------------------------------
@@ -185,8 +184,11 @@ function base64url(buf: Buffer): string {
 }
 
 // ---------------------------------------------------------------------------
-// A tiny local HTTP server to catch the browser redirect automatically,
-// instead of asking someone to copy a URL out of their address bar.
+// Parsing the browser's final landing URL after login. There's no local
+// listener catching the redirect automatically -- wowauth's own public
+// `/health` endpoint (always up, no setup needed) is used as the
+// redirect_uri instead, and the person running this pastes the resulting
+// URL back in.
 // ---------------------------------------------------------------------------
 
 interface CallbackResult {
@@ -196,56 +198,14 @@ interface CallbackResult {
   errorDescription?: string;
 }
 
-function startLocalCallbackServer(): Promise<{ redirectUri: string; wait: () => Promise<CallbackResult> }> {
-  return new Promise((resolveStart, rejectStart) => {
-    let resolveResult!: (r: CallbackResult) => void;
-    const resultPromise = new Promise<CallbackResult>((res) => {
-      resolveResult = res;
-    });
-
-    const server = createServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url.pathname !== "/callback") {
-        res.writeHead(404).end();
-        return;
-      }
-      const result: CallbackResult = {
-        code: url.searchParams.get("code") ?? undefined,
-        state: url.searchParams.get("state") ?? undefined,
-        error: url.searchParams.get("error") ?? undefined,
-        errorDescription: url.searchParams.get("error_description") ?? undefined,
-      };
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(
-        result.error
-          ? `<html><body><h1>Nmbrs reported an error</h1><p>${result.error}: ${result.errorDescription ?? ""}</p><p>You can close this tab and go back to the terminal.</p></body></html>`
-          : `<html><body><h1>Connected</h1><p>You can close this tab and go back to the terminal.</p></body></html>`,
-      );
-      resolveResult(result);
-    });
-
-    server.on("error", rejectStart);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        rejectStart(new Error("failed to bind a local port for the callback listener"));
-        return;
-      }
-      resolveStart({
-        redirectUri: `http://127.0.0.1:${address.port}/callback`,
-        wait: () =>
-          Promise.race([
-            resultPromise,
-            new Promise<CallbackResult>((_, reject) =>
-              setTimeout(
-                () => reject(new Error("timed out waiting for the browser login (5 minutes)")),
-                5 * 60 * 1000,
-              ),
-            ),
-          ]).finally(() => server.close()),
-      });
-    });
-  });
+function parseCallbackUrl(raw: string): CallbackResult {
+  const url = new URL(raw);
+  return {
+    code: url.searchParams.get("code") ?? undefined,
+    state: url.searchParams.get("state") ?? undefined,
+    error: url.searchParams.get("error") ?? undefined,
+    errorDescription: url.searchParams.get("error_description") ?? undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,15 +260,15 @@ read it -- not even wowauth's own database can.
   console.log(`  ✓ Private key saved to ${keyPath} (readable only by you) -- wowauth never sees it.`);
   console.log(`  ✓ Public key (this one's fine to share): ${publicKeyB64}`);
 
-  step(3, "Get ready for the one-time browser login");
+  step(3, "Where the browser lands after logging in");
   explain(`
-In a minute you'll open a Nmbrs login page in your browser. So it has
-somewhere to land afterwards without you needing to copy anything out of
-the address bar, this script briefly runs its own tiny web server on your
-machine to catch that redirect automatically.
+In a minute you'll open a Nmbrs login page in your browser. Afterwards it
+needs somewhere to land -- that's wowauth's own public health endpoint, so
+no local server or open port is required. You'll copy the resulting URL
+back out of the address bar once you get there.
 `);
-  const callback = await startLocalCallbackServer();
-  console.log(`  ✓ Listening locally at ${callback.redirectUri}`);
+  const redirectUri = `${publicUrl}/health`;
+  console.log(`  ✓ Using ${redirectUri} as the redirect target`);
 
   step(4, "Register the connection with wowauth");
   explain(`
@@ -327,7 +287,7 @@ real ones yet, that happens in step 6.
       auth_url: NMBRS_AUTH_URL,
       token_url: NMBRS_TOKEN_URL,
       redirect_url: "placeholder-set-in-the-next-step",
-      allowed_redirect_uris: [callback.redirectUri],
+      allowed_redirect_uris: [redirectUri],
       scopes: NMBRS_SCOPES,
       public_key: publicKeyB64,
     },
@@ -392,7 +352,7 @@ no wowauth endpoint ever returns it back once sent, by design.
   );
 
   const authorizeParams = new URLSearchParams({
-    redirect_uri: callback.redirectUri,
+    redirect_uri: redirectUri,
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -402,22 +362,23 @@ no wowauth endpoint ever returns it back once sent, by design.
 
   explain(`
 Open this URL in a browser -- it'll take you to Nmbrs to log in and
-approve access, then bounce you right back here automatically:
+approve access, then bounce you back to wowauth's health endpoint with
+"?code=...&state=..." (or "?error=...") added to the URL:
 
   ${authorizeUrl}
 `);
-  console.log("  Waiting for you to finish logging in (up to 5 minutes)...");
   console.log(
     '  (If your browser lands on a Nmbrs error page reading "Invalid scope" instead of a\n' +
       "   login screen, Nmbrs is rejecting one of NMBRS_SCOPES from the top of this file for\n" +
       "   your specific partner client -- trim it down and re-run.)",
   );
 
+  const landedOn = await askRequired("Once you're redirected, paste the full URL from your browser's address bar");
   let result: CallbackResult;
   try {
-    result = await callback.wait();
-  } catch (err) {
-    fail((err as Error).message);
+    result = parseCallbackUrl(landedOn);
+  } catch {
+    fail("That didn't look like a valid URL.");
   }
   if (result.error) fail(`Nmbrs (via wowauth) reported an error: ${result.error} ${result.errorDescription ?? ""}`);
   if (result.state !== state) fail("The state returned didn't match what we sent -- aborting.");
@@ -438,7 +399,7 @@ spent by the time you read this.
       form: new URLSearchParams({
         grant_type: "authorization_code",
         code: result.code,
-        redirect_uri: callback.redirectUri,
+        redirect_uri: redirectUri,
         code_verifier: verifier,
       }),
       maskBodyKeys: ["code_verifier"],

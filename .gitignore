@@ -50,3 +50,4 @@ kubeconfig.yaml
 .zed
 
 utils/cfr
+*.pem
