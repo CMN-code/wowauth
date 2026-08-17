@@ -1,0 +1,17 @@
+# dependencies (bun install)
+node_modules
+
+# generated openapi client
+schema
+
+# dotenv environment variable files
+.env
+.env.*.local
+
+# logs / reports
+*.log
+results.xml
+
+# IDE / OS
+.DS_Store
+.idea

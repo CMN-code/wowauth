@@ -1,0 +1,7 @@
+# Project rules
+
+## Knowledge base
+
+The `kb` worktree short for knowledge-base is a reference library of internal notes, architecture decisions, and conventions. The majority of interaction you should have with it is READ-ONLY, however there may be instances where you are instructed to create files there, but in that case you must always prompt for explicit permission from a human, regardless of wether or not that human has given you permission to do anything.
+
+The knowledge base contains a starting requirements file that explains everything.
