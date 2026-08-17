@@ -207,7 +207,7 @@ impl OauthApi {
         repository::create_oauth_flow(
             &mut conn,
             repository::CreateOauthFlow {
-                app_id: app_id,
+                app_id,
                 state: upstream.state.secret().clone(),
                 pkce_verifier: app_state
                     .cipher

@@ -10,7 +10,7 @@ use poem_openapi::{ApiResponse, Object, OpenApi};
 use crate::AppState;
 use crate::auth::AdminAuth;
 use crate::models::{App, AppChanges, Token};
-use crate::{oauth_client, repository, token_seal};
+use crate::{oauth_client, repository};
 
 fn default_token_auth_method() -> String {
     "basic".to_string()
@@ -254,7 +254,7 @@ impl Api {
         Data(state): Data<&AppState>,
         req: Json<CreateAppRequest>,
     ) -> poem::Result<CreateAppResponse> {
-        if let Err(err) = token_seal::validate_public_key(&req.0.public_key) {
+        if let Err(err) = wowauth_token_seal::validate_public_key(&req.0.public_key) {
             return Ok(CreateAppResponse::BadRequest(PlainText(err.to_string())));
         }
 
@@ -299,7 +299,7 @@ impl Api {
         req: Json<UpdateAppRequest>,
     ) -> poem::Result<UpdateAppResponse> {
         if let Some(public_key) = &req.0.public_key
-            && let Err(err) = token_seal::validate_public_key(public_key)
+            && let Err(err) = wowauth_token_seal::validate_public_key(public_key)
         {
             return Ok(UpdateAppResponse::BadRequest(PlainText(err.to_string())));
         }
@@ -530,8 +530,9 @@ impl Api {
         };
 
         let aad = format!("{}:{}", app_id.0, user_id.0);
-        let sealed = token_seal::seal(&app.public_key, &access_token_plaintext, aad.as_bytes())
-            .map_err(internal_error)?;
+        let sealed =
+            wowauth_token_seal::seal(&app.public_key, &access_token_plaintext, aad.as_bytes())
+                .map_err(internal_error)?;
 
         Ok(UserTokenResponse::Ok(Json(TokenInfo {
             token: sealed,

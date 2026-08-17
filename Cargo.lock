@@ -2737,7 +2737,6 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "dotenvy",
- "hpke",
  "libsqlite3-sys",
  "mimalloc",
  "oauth2",
@@ -2752,6 +2751,29 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wowauth-token-seal",
+]
+
+[[package]]
+name = "wowauth-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "wowauth-token-seal",
+]
+
+[[package]]
+name = "wowauth-token-seal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "hpke",
 ]
 
 [[package]]

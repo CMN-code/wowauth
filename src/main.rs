@@ -8,7 +8,6 @@ mod oauth_handlers;
 mod pkce;
 mod repository;
 mod schema;
-mod token_seal;
 
 use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;

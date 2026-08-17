@@ -454,7 +454,9 @@ Go to https://partner-portal.nmbrsapp.com/integrations and create a new app:
     App name:          ${connectionName}
     Application type:  Web
     Redirect URL:      ${wowauthCallback}
-    (fill in anything for description / icon / privacy policy)
+    CMN-icon URL:      https://media.licdn.com/dms/image/v2/D4E0BAQFFEF2VSIhfAg/company-logo_200_200/company-logo_200_200/0/1738787693133/creative_media_network_logo?e=2147483647&v=beta&t=RILZl5c1Xb6B0lmymFD4_aN41wiRknRm4W4XX7wZ0Oc
+
+    (fill in anything for description / privacy policy)
 
 Submit the form, then copy the Client ID and Client Secret it gives you.
 `);

@@ -1,0 +1,12 @@
+[package]
+name = "wowauth-token-seal"
+description = "HPKE sealing/opening for wowauth's encrypted token payloads"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hpke.workspace = true
+base64.workspace = true
+anyhow.workspace = true
