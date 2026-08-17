@@ -332,8 +332,7 @@ Find these three values in wowauth's .env file.
 
   step(2, "Your Nmbrs subscription key");
   explain(`
-Nmbrs's own API (as opposed to wowauth) requires this on every request, as
-the X-Subscription-Key header -- separate from the OAuth access token.
+    Go to https://developer.payroll.nmbrs.com/profile and copy a primary subscription key here.
 `);
   const subscriptionKey = await askRequired("Nmbrs subscription key");
 
@@ -454,7 +453,7 @@ Go to https://partner-portal.nmbrsapp.com/integrations and create a new app:
     App name:          ${connectionName}
     Application type:  Web
     Redirect URL:      ${wowauthCallback}
-    CMN-icon URL:      https://media.licdn.com/dms/image/v2/D4E0BAQFFEF2VSIhfAg/company-logo_200_200/company-logo_200_200/0/1738787693133/creative_media_network_logo?e=2147483647&v=beta&t=RILZl5c1Xb6B0lmymFD4_aN41wiRknRm4W4XX7wZ0Oc
+    CMN-icon URL:      https://cdn.prod.website-files.com/664d8603947eced5ca9765b0/664dd23030ceb92425696ff4_CMN-logo-footer.svg
 
     (fill in anything for description / privacy policy)
 
@@ -549,13 +548,14 @@ address bar and paste it below.
   step(12, "Save these");
   const secretsPath = "./nmbrs-secrets.json";
   const secrets = {
-    wowauth: { admin_url: adminUrl, config_secret: configSecret },
+    specifc: { subscription_key: subscriptionKey, },
     connection: {
       name: connectionName,
       app_id: appId,
       user_id: userId,
+      admin_url: adminUrl,
+      config_secret: configSecret,
       private_key: { format: "x25519-raw-base64", value: privateKeyB64 },
-      subscription_key: subscriptionKey,
     },
   };
   writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), { mode: 0o600 });
