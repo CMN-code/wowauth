@@ -162,18 +162,18 @@ impl OauthApi {
     #[allow(clippy::too_many_arguments)]
     async fn authorize(
         &self,
-        app_id: Path<String>,
-        redirect_uri: Query<String>,
-        state: Query<String>,
-        code_challenge: Query<String>,
-        code_challenge_method: Query<String>,
+        Path(app_id): Path<String>,
+        Query(redirect_uri): Query<String>,
+        Query(state): Query<String>,
+        Query(code_challenge): Query<String>,
+        Query(code_challenge_method): Query<String>,
         /// Identifies which end-user account this authorization is for
         /// (e.g. their email), so that re-authorizing the same account
         /// later reuses the same user id instead of minting a new one.
         /// Optional — if omitted, every authorization is treated as a new,
         /// distinct user.
-        account_hint: Query<Option<String>>,
-        scope: Query<Option<String>>,
+        Query(account_hint): Query<Option<String>>,
+        Query(scope): Query<Option<String>>,
         Data(app_state): Data<&AppState>,
     ) -> poem::Result<AuthorizeResponse> {
         let mut conn = app_state
@@ -181,12 +181,12 @@ impl OauthApi {
             .get()
             .map_err(poem::error::InternalServerError)?;
         let Some(app) =
-            repository::get_app(&mut conn, &app_id.0).map_err(poem::error::InternalServerError)?
+            repository::get_app(&mut conn, &app_id).map_err(poem::error::InternalServerError)?
         else {
             return Ok(AuthorizeResponse::NotFound);
         };
 
-        if code_challenge_method.0 != "S256" {
+        if code_challenge_method != "S256" {
             return Ok(AuthorizeResponse::BadRequest(PlainText(
                 "code_challenge_method must be S256".to_string(),
             )));
@@ -194,29 +194,29 @@ impl OauthApi {
 
         let allowed: Vec<String> =
             serde_json::from_str(&app.allowed_redirect_uris).unwrap_or_default();
-        if !allowed.contains(&redirect_uri.0) {
+        if !allowed.contains(&redirect_uri) {
             return Ok(AuthorizeResponse::BadRequest(PlainText(
                 "redirect_uri is not allow-listed for this app".to_string(),
             )));
         }
 
-        let scopes = scope.0.unwrap_or_else(|| app.scopes.clone());
+        let scopes = scope.unwrap_or_else(|| app.scopes.clone());
         let upstream =
             oauth_client::build_authorization_request(&app, &scopes).map_err(internal_error)?;
 
         repository::create_oauth_flow(
             &mut conn,
             repository::CreateOauthFlow {
-                app_id: app_id.0,
+                app_id: app_id,
                 state: upstream.state.secret().clone(),
                 pkce_verifier: app_state
                     .cipher
                     .encrypt(upstream.pkce_verifier.secret().as_bytes()),
-                redirect_after: redirect_uri.0,
-                external_account_hint: account_hint.0,
+                redirect_after: redirect_uri,
+                external_account_hint: account_hint,
                 expires_at: Utc::now().naive_utc() + chrono::Duration::minutes(10),
-                caller_state: state.0,
-                caller_code_challenge: code_challenge.0,
+                caller_state: state,
+                caller_code_challenge: code_challenge,
             },
         )
         .map_err(poem::error::InternalServerError)?;
