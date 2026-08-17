@@ -64,6 +64,17 @@ pub fn get_app(conn: &mut SqliteConnection, app_id: &str) -> QueryResult<Option<
         .optional()
 }
 
+/// Looks up an app by its (unique) human-readable name, e.g. so a setup
+/// script can resume against a connection it registered in an earlier,
+/// incomplete run instead of registering a duplicate.
+pub fn get_app_by_name(conn: &mut SqliteConnection, name: &str) -> QueryResult<Option<App>> {
+    apps::table
+        .filter(apps::name.eq(name))
+        .select(App::as_select())
+        .first(conn)
+        .optional()
+}
+
 /// Applies `changes` to an app. If `changes.public_key` differs from the
 /// app's current key, every user under this app is deleted first — an
 /// intentional security measure: rotating the key invalidates every grant

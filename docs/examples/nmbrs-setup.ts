@@ -334,17 +334,16 @@ Find these three values in wowauth's .env file.
   const adminHeaders = { Authorization: `Bearer ${configSecret}` };
 
   step(2, "Generate an encryption key for your tokens");
-  const keyPath = await ask("Where should the private key be saved?", "./wowauth_nmbrs_private_key.pem");
   const { publicKey, privateKey } = generateKeyPairSync("x25519", {
     publicKeyEncoding: { type: "spki", format: "der" },
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "der" },
   });
-  // The DER SubjectPublicKeyInfo encoding for X25519 is a fixed 12-byte
-  // header followed by the raw 32-byte key -- wowauth wants just the raw
-  // key, base64-encoded.
+  // The DER SubjectPublicKeyInfo/PrivateKeyInfo encodings for X25519 are
+  // both a fixed header followed by the raw 32-byte key -- wowauth wants
+  // just the raw key, base64-encoded, and so does nmbrs-secrets.json below.
   const publicKeyB64 = publicKey.subarray(publicKey.length - 32).toString("base64");
-  writeFileSync(keyPath, privateKey, { mode: 0o600 });
-  console.log(`  ✓ Key saved to ${keyPath}`);
+  const privateKeyB64 = privateKey.subarray(privateKey.length - 32).toString("base64");
+  console.log("  ✓ Key pair generated");
 
   step(3, "Where the browser lands after logging in");
   const redirectUri = `${publicUrl}/health`;
@@ -358,26 +357,81 @@ Turn off anything you don't want to allow.
   console.log(`  ✓ Requesting: ${scopes}`);
 
   step(5, "Register the connection with wowauth");
-  const connectionName = await ask("A short name for this connection", "nmbrs");
-  const app = await call<{ id: string }>("POST", `${adminUrl}/apps`, {
-    headers: adminHeaders,
-    json: {
-      name: connectionName,
-      client_id: "pending-nmbrs-client-id",
-      client_secret: "pending-nmbrs-secret",
-      auth_url: NMBRS_AUTH_URL,
-      token_url: NMBRS_TOKEN_URL,
-      redirect_url: "placeholder-set-in-the-next-step",
-      allowed_redirect_uris: [redirectUri],
-      scopes,
-      public_key: publicKeyB64,
-    },
-    maskBodyKeys: ["client_secret", "public_key"],
-    maskHeaders: ["Authorization"],
-    quiet: true,
-  });
-  const appId = app.id;
-  console.log(`  ✓ Registered (id: ${appId})`);
+  const reuseName = await ask(
+    "Reuse an existing wowauth connection by name (e.g. one a previous, incomplete run of\n" +
+      "  this script already registered), or leave blank to register a new one",
+    "",
+  );
+
+  let appId: string;
+  let connectionName: string;
+  // Whether step 7 below still needs to register a (new) app in Nmbrs's
+  // portal -- true for a brand-new connection, and for a reused one that
+  // never got past step 7 last time (still holding the placeholder
+  // credentials set below).
+  let needsNmbrsRegistration = true;
+
+  if (reuseName) {
+    const lookup = await fetch(`${adminUrl}/apps/by-name/${encodeURIComponent(reuseName)}`, {
+      headers: adminHeaders,
+    });
+    if (lookup.status === 404) {
+      fail(`No existing wowauth connection named "${reuseName}" was found -- check the name and try again.`);
+    }
+    if (!lookup.ok) {
+      fail(`Looking up "${reuseName}" failed: ${lookup.status} ${await lookup.text()}`);
+    }
+    const existing = (await lookup.json()) as { id: string; name: string; client_id: string };
+    appId = existing.id;
+    connectionName = existing.name;
+    needsNmbrsRegistration = existing.client_id === "pending-nmbrs-client-id";
+    console.log(`  ✓ Reusing "${connectionName}" (id: ${appId})`);
+    console.log("  (ignoring the scopes picked in step 4 -- reusing whatever's already registered)");
+
+    const status = await call<{ user_count: number }>("GET", `${adminUrl}/apps/${appId}/status`, {
+      headers: adminHeaders,
+      maskHeaders: ["Authorization"],
+      quiet: true,
+    });
+    if (status.user_count > 0) {
+      const confirm = await ask(
+        `"${connectionName}" already has ${status.user_count} connected user(s). The new encryption key\n` +
+          "  from step 2 will replace the old one, which disconnects all of them. Type \"yes\" to continue",
+        "",
+      );
+      if (confirm.toLowerCase() !== "yes") fail("Aborted -- no changes made.");
+    }
+
+    await call("PATCH", `${adminUrl}/apps/${appId}`, {
+      headers: adminHeaders,
+      json: { public_key: publicKeyB64, allowed_redirect_uris: [redirectUri] },
+      maskBodyKeys: ["public_key"],
+      maskHeaders: ["Authorization"],
+      quiet: true,
+    });
+    console.log("  ✓ Encryption key on file updated to match step 2");
+  } else {
+    connectionName = await ask("A short name for this connection", "nmbrs");
+    const app = await call<{ id: string }>("POST", `${adminUrl}/apps`, {
+      headers: adminHeaders,
+      json: {
+        name: connectionName,
+        client_id: "pending-nmbrs-client-id",
+        client_secret: "pending-nmbrs-secret",
+        auth_url: NMBRS_AUTH_URL,
+        token_url: NMBRS_TOKEN_URL,
+        redirect_url: "placeholder-set-in-the-next-step",
+        allowed_redirect_uris: [redirectUri],
+        scopes,
+        public_key: publicKeyB64,
+      },
+      maskBodyKeys: ["client_secret", "public_key"],
+      maskHeaders: ["Authorization"],
+      quiet: true,
+    });
+    appId = app.id;
+    console.log(`  ✓ Registered (id: ${appId})`);
+  }
 
   step(6, "Point wowauth's own callback at itself");
   const wowauthCallback = `${publicUrl}/${appId}/oauth/callback`;
@@ -403,6 +457,10 @@ Submit the form, then copy the Client ID and Client Secret it gives you.
   await rl.question("Press Enter once you have your Nmbrs Client ID and Client Secret ready...");
   const nmbrsClientId = await askRequired("Paste the Client ID Nmbrs gave you");
   const nmbrsClientSecret = await askRequired("Paste the Client Secret Nmbrs gave you");
+  await rl.question(
+    "Go back to the Nmbrs dialog and click Save (the app isn't live on Nmbrs's side until you do -- " +
+      "logging in before this point fails with a generic error page). Press Enter once you've saved it...",
+  );
 
   await call("PATCH", `${adminUrl}/apps/${appId}`, {
     headers: adminHeaders,
@@ -483,13 +541,22 @@ address bar and paste it below.
   console.log(`  ✓ user_id: ${userId}${users[0]?.label ? ` (labeled "${users[0].label}")` : ""}`);
 
   step(11, "Save these");
+  const secretsPath = "./nmbrs-secrets.json";
+  const secrets = {
+    wowauth: { admin_url: adminUrl, config_secret: configSecret },
+    connection: {
+      name: connectionName,
+      app_id: appId,
+      user_id: userId,
+      private_key: { format: "x25519-raw-base64", value: privateKeyB64 },
+    },
+  };
+  writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), { mode: 0o600 });
   console.log(`
-  APP_ID       = ${appId}
-  USER_ID      = ${userId}
-  PRIVATE_KEY  = ${keyPath}
-
-  Keep these three (plus your CONFIG_SECRET) somewhere safe. That's all
-  you'll need going forward -- no more browser logins.
+  ✓ Saved to ${secretsPath} (readable only by you -- treat it like a database
+    credential, never commit it; see docs/examples/fuse-secrets.schema.json
+    for its shape). That's all you'll need going forward -- no more browser
+    logins.
 `);
 
   step(12, "Prove it works");
@@ -501,8 +568,9 @@ address bar and paste it below.
   console.log(`
   wowauth returned: ${mask(tokenInfo.token)}
 
-  That's expected to look like gibberish -- it's encrypted, and only
-  ${keyPath} can decrypt it (see docs/examples/DEFAULT.md step 7 for how).
+  That's expected to look like gibberish -- it's encrypted, and only the
+  private key in ${secretsPath} can decrypt it (see docs/examples/DEFAULT.md
+  step 7 for how).
 
   Here's today's plain access token, to prove the Nmbrs connection itself
   works right now:

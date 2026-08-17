@@ -189,6 +189,15 @@ enum UpdateAppResponse {
     Conflict(PlainText<String>),
 }
 
+#[allow(clippy::large_enum_variant)]
+#[derive(ApiResponse)]
+enum GetAppResponse {
+    #[oai(status = 200)]
+    Ok(Json<AppView>),
+    #[oai(status = 404)]
+    NotFound,
+}
+
 #[derive(ApiResponse)]
 enum StatusResponse {
     #[oai(status = 200)]
@@ -335,7 +344,24 @@ impl Api {
         }
     }
 
-    /// Check whether an app is configured and how its users are doing
+    /// Find app by name
+    #[oai(path = "/apps/by-name/:name", method = "get")]
+    async fn get_app_by_name(
+        &self,
+        name: Path<String>,
+        _auth: AdminAuth,
+        Data(state): Data<&AppState>,
+    ) -> poem::Result<GetAppResponse> {
+        let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
+        match repository::get_app_by_name(&mut conn, &name.0)
+            .map_err(poem::error::InternalServerError)?
+        {
+            Some(app) => Ok(GetAppResponse::Ok(Json(app.into()))),
+            None => Ok(GetAppResponse::NotFound),
+        }
+    }
+
+    /// Get status of app
     #[oai(path = "/apps/:app_id/status", method = "get")]
     async fn app_status(
         &self,
@@ -363,7 +389,7 @@ impl Api {
         })))
     }
 
-    /// List the users authorized under an app
+    /// List users
     #[oai(path = "/apps/:app_id/users", method = "get")]
     async fn list_users(
         &self,
@@ -386,7 +412,7 @@ impl Api {
         )))
     }
 
-    /// Revoke a user's authorization
+    /// Revoke user
     #[oai(path = "/apps/:app_id/users/:user_id", method = "delete")]
     async fn delete_user(
         &self,
@@ -405,7 +431,7 @@ impl Api {
         })
     }
 
-    /// Check whether a user's authorization is still active
+    /// Get user status
     #[oai(path = "/apps/:app_id/users/:user_id/status", method = "get")]
     async fn user_status(
         &self,
@@ -433,8 +459,7 @@ impl Api {
         })))
     }
 
-    /// Get a fresh, HPKE-encrypted access token for a user, refreshing it
-    /// upstream first if it's expired
+    /// Get encrypted token
     #[oai(path = "/apps/:app_id/users/:user_id/token", method = "get")]
     async fn user_token(
         &self,

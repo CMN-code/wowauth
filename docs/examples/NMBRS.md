@@ -158,7 +158,11 @@ of this doc, using the `$REDIRECT_URL` just printed for "Redirect URLs".
 Submit it.
 
 Nmbrs's portal then shows you the app's real client ID and client secret —
-copy both.
+copy both, then click **Save** on the dialog before moving on. The app
+isn't actually live on Nmbrs's side until you save it — trying to log in
+(step 6) before saving fails with a generic Nmbrs error page ("The
+resource you are looking for has been removed...") instead of a login
+screen, which is easy to mistake for a wowauth-side problem.
 
 ## 5. Patch wowauth with the real credentials
 

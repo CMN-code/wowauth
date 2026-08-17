@@ -128,7 +128,7 @@ pub struct OauthApi;
 
 #[OpenApi]
 impl OauthApi {
-    /// OIDC discovery document for this app
+    /// OIDC discovery
     #[oai(path = "/:app_id/.well-known/openid-configuration", method = "get")]
     async fn discovery(
         &self,
@@ -157,8 +157,7 @@ impl OauthApi {
         })))
     }
 
-    /// Start the authorization code flow (with PKCE) against this app's
-    /// upstream provider
+    /// Start authorization code flow
     #[oai(path = "/:app_id/oauth/auth", method = "get")]
     #[allow(clippy::too_many_arguments)]
     async fn authorize(
@@ -225,8 +224,7 @@ impl OauthApi {
         Ok(AuthorizeResponse::Redirect(upstream.url))
     }
 
-    /// Receives the redirect back from the upstream provider and completes
-    /// the exchange; not meant to be called directly
+    /// Callback endpoint
     #[oai(path = "/:app_id/oauth/callback", method = "get")]
     async fn callback(
         &self,
@@ -353,8 +351,7 @@ impl OauthApi {
         Ok(CallbackResponse::Redirect(location))
     }
 
-    /// Exchange an authorization code for a token — the standard OAuth
-    /// token endpoint, callable by any OAuth-capable client
+    /// Exchange auth code for token
     #[oai(path = "/:app_id/oauth/token", method = "post")]
     async fn token(
         &self,
@@ -437,7 +434,7 @@ impl OauthApi {
         })))
     }
 
-    /// Revoke a token — RFC 7009
+    /// Revoke a token (RFC 7009)
     #[oai(path = "/:app_id/oauth/revoke", method = "post")]
     async fn revoke(
         &self,

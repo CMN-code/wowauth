@@ -57,7 +57,7 @@ fix:
 # End-to-end integration tests: spawns a real wowauth instance against a throwaway
 # SQLite file plus a mock upstream OAuth provider, then drives real HTTP requests
 # against it. See tests/INTEGRATION_TESTING.md. Needs bun (`flox activate` provides it).
-integration-test:
+ci:
     cd tests && bun run ci
 
 # Same, without reinstalling deps or regenerating the OpenAPI client -- for iterating.
