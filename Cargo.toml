@@ -1,47 +1,73 @@
-[package]
-name = "wowauth"
+[workspace]
+members = ["crates/wowauth-token-seal", "crates/wowauth-client"]
+
+[workspace.package]
 version = "0.1.0"
-authors = ["Elias Groot <elias@definedonce.com>", "Max Gallup <max@definedonce.com>"]
-description = "Standalone OAuth 2.0 authorization server"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/CMN-code/wowauth"
 
-[dependencies]
-# Server & Runtime
+[workspace.dependencies]
 poem = "3.1.12"
 poem-openapi = { version = "5.1.16", features = ["chrono", "scalar"] }
 tokio = { version = "1.0", features = ["full"] }
-
-# OAuth
 oauth2 = "5.0.0"
-# Matches oauth2's own reqwest dependency so cargo unifies to one build; used
-# directly so per-app extra headers can be applied via `default_headers`.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 url = "2.5"
-
-# Database
 diesel = { version = "2.3", features = ["sqlite", "r2d2", "chrono", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = "2.3"
-# Forces libsqlite3-sys to compile SQLite from vendored source, so no system libsqlite3 is required.
 libsqlite3-sys = { version = "0.38", features = ["bundled"] }
-
-# Crypto & IDs
 chacha20poly1305 = "0.11"
 hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 sha2 = "0.11"
 base64 = "0.22"
 uuid = { version = "1.0", features = ["v4"] }
-
-# Serde
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Time
 chrono = { version = "0.4", features = ["serde"] }
-
-# Introspection
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
 dotenvy = "0.15"
+thiserror = "2.0"
+mimalloc = "0.1.43"
+wowauth-token-seal = { path = "crates/wowauth-token-seal" }
+
+[package]
+name = "wowauth"
+authors = ["Elias Groot <elias@definedonce.com>", "Max Gallup <max@definedonce.com>"]
+description = "Standalone OAuth 2.0 authorization server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+poem.workspace = true
+poem-openapi.workspace = true
+tokio.workspace = true
+oauth2.workspace = true
+reqwest.workspace = true
+url.workspace = true
+diesel.workspace = true
+diesel_migrations.workspace = true
+libsqlite3-sys.workspace = true
+chacha20poly1305.workspace = true
+sha2.workspace = true
+base64.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+wowauth-token-seal.workspace = true
+
+# For musl target we ship a more performant allocator (single line change in main.rs)
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc.workspace = true
+
+[profile.release]
+strip = "symbols"

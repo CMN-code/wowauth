@@ -15,6 +15,10 @@
  * enough inline to hand to someone non-technical and have them run it
  * standalone.
  *
+ * You'll need a Nmbrs partner account to add a custom integration -- do that
+ * at https://partner-portal.nmbrsapp.com/integrations before running this
+ * script (step 8 below will ask you to register the app there).
+ *
  * Run it with:
  *
  *   bun run docs/examples/nmbrs-setup.ts
@@ -37,22 +41,40 @@ import { createInterface } from "node:readline/promises";
 const NMBRS_AUTH_URL = "https://identityservice.nmbrs.com/connect/authorize";
 const NMBRS_TOKEN_URL = "https://identityservice.nmbrs.com/connect/token";
 
-// The full read-only scope set Nmbrs documents for partner apps, plus the
-// mandatory offline_access -- without it Nmbrs never issues a refresh
+// offline_access is mandatory -- without it Nmbrs never issues a refresh
 // token, and wowauth would have nothing to renew with once the access
-// token expires. Deliberately no "openid" here: despite looking like
-// standard OIDC, Nmbrs doesn't grant it to partner-app clients and
-// requesting it is a common cause of "Invalid scope" errors. If Nmbrs
-// rejects one of the scopes below for your specific partner client, trim
-// it from this list and re-run the script.
-const NMBRS_SCOPES = [
-  "offline_access",
+// token expires. Always requested; not part of the interactive picker below.
+const NMBRS_MANDATORY_SCOPES = ["offline_access"];
+
+// The full read-only-and-otherwise scope set Nmbrs documents for partner
+// apps. Deliberately no "openid" here: despite looking like standard OIDC,
+// Nmbrs doesn't grant it to partner-app clients and requesting it is a
+// common cause of "Invalid scope" errors. Presented as a checklist at the
+// start of the walkthrough -- if Nmbrs rejects one of these for your
+// specific partner client, deselect it there and re-run the script.
+const NMBRS_OPTIONAL_SCOPES = [
+  "employee.employment",
   "employee.employment.read",
+  "employee.info",
   "employee.info.read",
+  "employee.payment",
   "employee.payment.read",
+  "employee.leave",
+  "employee.leave.read",
+  "employee.orgstructure",
+  "employee.orgstructure.read",
+  "employee.bankaccount.read",
+  "employee.bankaccount",
+  "employee.document.read",
+  "employee.document",
+  "employee.payrollsettings",
+  "employee.payrollsettings.read",
+  "company.info",
   "company.info.read",
   "company.payrollsettings.read",
-].join(" ");
+  "company.leave.read",
+  "user.info.read",
+];
 
 // A light, read-only call used at the very end to prove the connection
 // actually works against real Nmbrs data.
@@ -100,6 +122,78 @@ function mask(value: string): string {
   return `${value.slice(0, 4)}${stars}${value.slice(-4)}`;
 }
 
+/**
+ * Interactive checkbox picker for scopes: ↑/↓ to move, space to toggle,
+ * enter to confirm. Every optional scope starts checked -- Nmbrs partner
+ * clients are commonly scoped down rather than up, so "everything, then
+ * trim" is the safer default.
+ *
+ * `rl` already put stdin into keypress-emitting mode (readline does this for
+ * any TTY input at construction time) and attached its own keypress listener
+ * for line editing. That listener would otherwise fight this one -- readline
+ * would try to interpret arrow keys as history navigation and space as text
+ * input -- so it's detached for the duration of the picker and reattached
+ * once done, leaving later rl.question() calls unaffected.
+ */
+async function selectScopes(mandatory: string[], optional: string[]): Promise<string[]> {
+  if (!process.stdin.isTTY) {
+    console.log("  (non-interactive terminal -- requesting every documented scope)");
+    return [...mandatory, ...optional];
+  }
+
+  const selected = new Set(optional);
+  let cursor = 0;
+
+  const draw = () => {
+    for (const [i, scope] of optional.entries()) {
+      const marker = selected.has(scope) ? "[x]" : "[ ]";
+      const pointer = i === cursor ? "›" : " ";
+      process.stdout.write(`\x1b[2K\r  ${pointer} ${marker} ${scope}\n`);
+    }
+  };
+
+  console.log(`  (${mandatory.join(", ")} is always requested -- wowauth needs it to refresh tokens)\n`);
+  console.log("  ↑/↓ move    space toggle    enter confirm\n");
+  draw();
+
+  const readlineKeypressListeners = process.stdin.listeners("keypress");
+  for (const listener of readlineKeypressListeners) process.stdin.removeListener("keypress", listener as never);
+  const wasRaw = process.stdin.isRaw ?? false;
+  process.stdin.setRawMode(true);
+
+  await new Promise<void>((resolve) => {
+    const onKeypress = (_str: string, key: { name?: string; ctrl?: boolean } | undefined) => {
+      if (!key) return;
+      if (key.ctrl && key.name === "c") {
+        process.stdout.write("\n");
+        process.exit(130);
+      }
+      if (key.name === "up") cursor = (cursor - 1 + optional.length) % optional.length;
+      else if (key.name === "down") cursor = (cursor + 1) % optional.length;
+      else if (key.name === "space") {
+        const scope = optional[cursor]!;
+        if (selected.has(scope)) selected.delete(scope);
+        else selected.add(scope);
+      } else if (key.name === "return") {
+        process.stdin.off("keypress", onKeypress);
+        resolve();
+        return;
+      } else {
+        return;
+      }
+      process.stdout.write(`\x1b[${optional.length}A`);
+      draw();
+    };
+    process.stdin.on("keypress", onKeypress);
+  });
+
+  process.stdin.setRawMode(wasRaw);
+  for (const listener of readlineKeypressListeners) process.stdin.on("keypress", listener as never);
+  console.log("");
+
+  return [...mandatory, ...optional.filter((s) => selected.has(s))];
+}
+
 function narrate(
   method: string,
   url: string,
@@ -121,8 +215,11 @@ function narrate(
   }
 }
 
-/** Makes an HTTP call, printing exactly what's sent (with secrets blurred) and
- *  what comes back, so nothing this script does to your data is hidden. */
+/** Makes an HTTP call. By default prints exactly what's sent (with secrets
+ *  blurred) and what comes back, so nothing this script does to your data is
+ *  hidden. Pass `quiet: true` for internal bookkeeping calls where that
+ *  detail isn't useful to the person running the script -- errors still
+ *  print either way. */
 async function call<T = unknown>(
   method: string,
   url: string,
@@ -133,6 +230,7 @@ async function call<T = unknown>(
     maskBodyKeys?: string[];
     maskHeaders?: string[];
     onError?: string;
+    quiet?: boolean;
   } = {},
 ): Promise<T> {
   const headers = { ...(opts.headers ?? {}) };
@@ -156,7 +254,7 @@ async function call<T = unknown>(
       .join("\n");
   }
 
-  narrate(method, url, headers, opts.maskHeaders ?? [], bodyDisplay);
+  if (!opts.quiet) narrate(method, url, headers, opts.maskHeaders ?? [], bodyDisplay);
 
   const res = await fetch(url, { method, headers, body: requestBody });
   const text = await res.text();
@@ -167,7 +265,7 @@ async function call<T = unknown>(
     parsed = text;
   }
 
-  console.log(`  ← ${res.status} ${res.statusText}`);
+  if (!opts.quiet) console.log(`  ← ${res.status} ${res.statusText}`);
 
   if (!res.ok) {
     console.error(`\n✗ Request failed.${opts.onError ? ` ${opts.onError}` : ""}`);
@@ -217,133 +315,169 @@ async function main() {
 Connect a Nmbrs account to wowauth
 ===================================
 
-This walks through the whole thing: generating an encryption key,
-registering the connection with wowauth, handing off to Nmbrs's own
-signup form, logging in once through your browser, and finally proving
-the connection works. It explains what it's doing and what it's sending
-at each step -- nothing here is hidden from you.
+Just answer each question below. Press Enter to accept anything shown
+in [brackets].
 `);
 
   step(1, "Where is wowauth?");
   explain(`
-Three things are needed to talk to your wowauth instance's admin API --
-see wowauth's .env for these values if you're the one who deployed it.
+Find these three values in wowauth's .env file.
 `);
   const adminUrl = (
-    await ask("wowauth admin URL (where this script runs commands from)", "http://localhost:3000")
+    await ask("wowauth admin URL", "https://wowauth.fuse.creativemedianetwork.com")
   ).replace(/\/+$/, "");
-  const publicUrl = (
-    await ask(
-      "wowauth PUBLIC URL (what Nmbrs and your browser redirect to -- must be internet-reachable HTTPS in production)",
-      adminUrl,
-    )
-  ).replace(/\/+$/, "");
-  const configSecret = await askRequired("wowauth CONFIG_SECRET (the admin bearer secret from wowauth's .env)");
+  const publicUrl = (await ask("wowauth public URL", adminUrl)).replace(/\/+$/, "");
+  const configSecret = await askRequired("wowauth CONFIG_SECRET");
   const adminHeaders = { Authorization: `Bearer ${configSecret}` };
 
-  step(2, "Generate an encryption key for your tokens");
+  step(2, "Your Nmbrs subscription key");
   explain(`
-Every token wowauth ever hands back for this connection gets encrypted to
-a key you control, so only someone holding the matching private key can
-read it -- not even wowauth's own database can.
+Nmbrs's own API (as opposed to wowauth) requires this on every request, as
+the X-Subscription-Key header -- separate from the OAuth access token.
 `);
-  const keyPath = await ask("Where should the private key be saved?", "./wowauth_nmbrs_private_key.pem");
+  const subscriptionKey = await askRequired("Nmbrs subscription key");
+
+  step(3, "Generate an encryption key for your tokens");
   const { publicKey, privateKey } = generateKeyPairSync("x25519", {
     publicKeyEncoding: { type: "spki", format: "der" },
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "der" },
   });
-  // The DER SubjectPublicKeyInfo encoding for X25519 is a fixed 12-byte
-  // header followed by the raw 32-byte key -- wowauth wants just the raw
-  // key, base64-encoded.
+  // The DER SubjectPublicKeyInfo/PrivateKeyInfo encodings for X25519 are
+  // both a fixed header followed by the raw 32-byte key -- wowauth wants
+  // just the raw key, base64-encoded, and so does nmbrs-secrets.json below.
   const publicKeyB64 = publicKey.subarray(publicKey.length - 32).toString("base64");
-  writeFileSync(keyPath, privateKey, { mode: 0o600 });
-  console.log(`  ✓ Private key saved to ${keyPath} (readable only by you) -- wowauth never sees it.`);
-  console.log(`  ✓ Public key (this one's fine to share): ${publicKeyB64}`);
+  const privateKeyB64 = privateKey.subarray(privateKey.length - 32).toString("base64");
+  console.log("  ✓ Key pair generated");
 
-  step(3, "Where the browser lands after logging in");
-  explain(`
-In a minute you'll open a Nmbrs login page in your browser. Afterwards it
-needs somewhere to land -- that's wowauth's own public health endpoint, so
-no local server or open port is required. You'll copy the resulting URL
-back out of the address bar once you get there.
-`);
+  step(4, "Where the browser lands after logging in");
   const redirectUri = `${publicUrl}/health`;
-  console.log(`  ✓ Using ${redirectUri} as the redirect target`);
+  console.log(`  ✓ Using ${redirectUri}`);
 
-  step(4, "Register the connection with wowauth");
+  step(5, "Choose which Nmbrs scopes to request");
   explain(`
-This tells wowauth about Nmbrs: where to send people to log in, where to
-exchange a login for a token, and what data to ask permission for. The
-client_id/client_secret below are placeholders -- Nmbrs hasn't issued the
-real ones yet, that happens in step 6.
+Turn off anything you don't want to allow.
 `);
-  const connectionName = await ask("A short name for this connection", "nmbrs");
-  const app = await call<{ id: string }>("POST", `${adminUrl}/apps`, {
-    headers: adminHeaders,
-    json: {
-      name: connectionName,
-      client_id: "pending-nmbrs-client-id",
-      client_secret: "pending-nmbrs-secret",
-      auth_url: NMBRS_AUTH_URL,
-      token_url: NMBRS_TOKEN_URL,
-      redirect_url: "placeholder-set-in-the-next-step",
-      allowed_redirect_uris: [redirectUri],
-      scopes: NMBRS_SCOPES,
-      public_key: publicKeyB64,
-    },
-    maskBodyKeys: ["client_secret", "public_key"],
-    maskHeaders: ["Authorization"],
-  });
-  const appId = app.id;
-  console.log(`  ✓ Registered. wowauth's internal id for this connection: ${appId}`);
+  const scopes = (await selectScopes(NMBRS_MANDATORY_SCOPES, NMBRS_OPTIONAL_SCOPES)).join(" ");
+  console.log(`  ✓ Requesting: ${scopes}`);
 
-  step(5, "Point wowauth's own callback at itself");
-  explain(`
-Nmbrs needs one fixed URL to redirect to once someone logs in -- wowauth's
-own callback, which only exists now that this connection has an id.
-`);
+  step(6, "Register the connection with wowauth");
+  const reuseName = await ask(
+    "Reuse an existing wowauth connection by name (e.g. one a previous, incomplete run of\n" +
+      "  this script already registered), or leave blank to register a new one",
+    "",
+  );
+
+  let appId: string;
+  let connectionName: string;
+  // Whether step 8 below still needs to register a (new) app in Nmbrs's
+  // portal -- true for a brand-new connection, and for a reused one that
+  // never got past step 8 last time (still holding the placeholder
+  // credentials set below).
+  let needsNmbrsRegistration = true;
+
+  if (reuseName) {
+    const lookup = await fetch(`${adminUrl}/apps/by-name/${encodeURIComponent(reuseName)}`, {
+      headers: adminHeaders,
+    });
+    if (lookup.status === 404) {
+      fail(`No existing wowauth connection named "${reuseName}" was found -- check the name and try again.`);
+    }
+    if (!lookup.ok) {
+      fail(`Looking up "${reuseName}" failed: ${lookup.status} ${await lookup.text()}`);
+    }
+    const existing = (await lookup.json()) as { id: string; name: string; client_id: string };
+    appId = existing.id;
+    connectionName = existing.name;
+    needsNmbrsRegistration = existing.client_id === "pending-nmbrs-client-id";
+    console.log(`  ✓ Reusing "${connectionName}" (id: ${appId})`);
+    console.log("  (ignoring the scopes picked in step 5 -- reusing whatever's already registered)");
+
+    const status = await call<{ user_count: number }>("GET", `${adminUrl}/apps/${appId}/status`, {
+      headers: adminHeaders,
+      maskHeaders: ["Authorization"],
+      quiet: true,
+    });
+    if (status.user_count > 0) {
+      const confirm = await ask(
+        `"${connectionName}" already has ${status.user_count} connected user(s). The new encryption key\n` +
+          "  from step 3 will replace the old one, which disconnects all of them. Type \"yes\" to continue",
+        "",
+      );
+      if (confirm.toLowerCase() !== "yes") fail("Aborted -- no changes made.");
+    }
+
+    await call("PATCH", `${adminUrl}/apps/${appId}`, {
+      headers: adminHeaders,
+      json: { public_key: publicKeyB64, allowed_redirect_uris: [redirectUri] },
+      maskBodyKeys: ["public_key"],
+      maskHeaders: ["Authorization"],
+      quiet: true,
+    });
+    console.log("  ✓ Encryption key on file updated to match step 3");
+  } else {
+    connectionName = await ask("A short name for this connection", "nmbrs");
+    const app = await call<{ id: string }>("POST", `${adminUrl}/apps`, {
+      headers: adminHeaders,
+      json: {
+        name: connectionName,
+        client_id: "pending-nmbrs-client-id",
+        client_secret: "pending-nmbrs-secret",
+        auth_url: NMBRS_AUTH_URL,
+        token_url: NMBRS_TOKEN_URL,
+        redirect_url: "placeholder-set-in-the-next-step",
+        allowed_redirect_uris: [redirectUri],
+        scopes,
+        public_key: publicKeyB64,
+      },
+      maskBodyKeys: ["client_secret", "public_key"],
+      maskHeaders: ["Authorization"],
+      quiet: true,
+    });
+    appId = app.id;
+    console.log(`  ✓ Registered (id: ${appId})`);
+  }
+
+  step(7, "Point wowauth's own callback at itself");
   const wowauthCallback = `${publicUrl}/${appId}/oauth/callback`;
   await call("PATCH", `${adminUrl}/apps/${appId}`, {
     headers: adminHeaders,
     json: { redirect_url: wowauthCallback },
     maskHeaders: ["Authorization"],
+    quiet: true,
   });
-  console.log(`  ✓ wowauth will register itself with Nmbrs using: ${wowauthCallback}`);
+  console.log(`  ✓ Done`);
 
-  step(6, "Register the app in Nmbrs's own portal");
+  step(8, "Register the app in Nmbrs's own portal");
   explain(`
-Go to Nmbrs's partner/developer portal and register a new app with:
+Go to https://partner-portal.nmbrsapp.com/integrations and create a new app:
 
-    App name:          ${connectionName} (or anything descriptive)
+    App name:          ${connectionName}
     Application type:  Web
-    Redirect URLs:      ${wowauthCallback}
-    (description / icon URL / privacy policy: anything, Nmbrs just wants
-     them filled in)
+    Redirect URL:      ${wowauthCallback}
+    CMN-icon URL:      https://media.licdn.com/dms/image/v2/D4E0BAQFFEF2VSIhfAg/company-logo_200_200/company-logo_200_200/0/1738787693133/creative_media_network_logo?e=2147483647&v=beta&t=RILZl5c1Xb6B0lmymFD4_aN41wiRknRm4W4XX7wZ0Oc
 
-Nmbrs caps you at 5 redirect URLs total, so if you'll run more than one
-wowauth deployment (e.g. staging and production), register all of their
-callback URLs up front rather than editing this later.
+    (fill in anything for description / privacy policy)
 
-Submit the form. Nmbrs will then show you a Client ID (shaped like
-PartnerApp_<name>_<suffix>) and a Client Secret -- keep that page open.
+Submit the form, then copy the Client ID and Client Secret it gives you.
 `);
   await rl.question("Press Enter once you have your Nmbrs Client ID and Client Secret ready...");
   const nmbrsClientId = await askRequired("Paste the Client ID Nmbrs gave you");
   const nmbrsClientSecret = await askRequired("Paste the Client Secret Nmbrs gave you");
+  await rl.question(
+    "Go back to the Nmbrs dialog and click Save (the app isn't live on Nmbrs's side until you do -- " +
+      "logging in before this point fails with a generic error page). Press Enter once you've saved it...",
+  );
 
-  explain(`
-Patching wowauth with the real credentials. client_secret is write-only --
-no wowauth endpoint ever returns it back once sent, by design.
-`);
   await call("PATCH", `${adminUrl}/apps/${appId}`, {
     headers: adminHeaders,
     json: { client_id: nmbrsClientId, client_secret: nmbrsClientSecret },
     maskBodyKeys: ["client_secret"],
     maskHeaders: ["Authorization"],
+    quiet: true,
   });
   console.log("  ✓ wowauth now has your real Nmbrs credentials.");
 
-  step(7, "Log in to Nmbrs once, in your browser");
+  step(9, "Log in to Nmbrs once, in your browser");
   const state = randomBytes(16).toString("hex");
   const verifier = base64url(randomBytes(32));
   const challenge = base64url(createHash("sha256").update(verifier).digest());
@@ -361,16 +495,16 @@ no wowauth endpoint ever returns it back once sent, by design.
   const authorizeUrl = `${publicUrl}/${appId}/oauth/auth?${authorizeParams}`;
 
   explain(`
-Open this URL in a browser -- it'll take you to Nmbrs to log in and
-approve access, then bounce you back to wowauth's health endpoint with
-"?code=...&state=..." (or "?error=...") added to the URL:
+Open this link, log in to Nmbrs, and approve access:
 
   ${authorizeUrl}
+
+You'll land on a mostly-blank page. Copy the full URL from your browser's
+address bar and paste it below.
 `);
   console.log(
-    '  (If your browser lands on a Nmbrs error page reading "Invalid scope" instead of a\n' +
-      "   login screen, Nmbrs is rejecting one of NMBRS_SCOPES from the top of this file for\n" +
-      "   your specific partner client -- trim it down and re-run.)",
+    "  (If you see an error page instead of a login page, go back to step 5,\n" +
+      "   turn off the scope it's complaining about, and run this again.)",
   );
 
   const landedOn = await askRequired("Once you're redirected, paste the full URL from your browser's address bar");
@@ -385,13 +519,7 @@ approve access, then bounce you back to wowauth's health endpoint with
   if (!result.code) fail("No authorization code was received.");
   console.log("  ✓ Login approved, code received.");
 
-  step(8, "Exchange the login for a token");
-  explain(`
-Standard OAuth token exchange. code_verifier proves this exchange is
-coming from the same script that started the login (PKCE) -- shown
-blurred here since it's effectively a secret, even though it's already
-spent by the time you read this.
-`);
+  step(10, "Exchange the login for a token");
   const tokenResponse = await call<{ access_token: string; expires_in?: number }>(
     "POST",
     `${publicUrl}/${appId}/oauth/token`,
@@ -403,40 +531,42 @@ spent by the time you read this.
         code_verifier: verifier,
       }),
       maskBodyKeys: ["code_verifier"],
+      quiet: true,
     },
   );
   console.log(`  ✓ Got a working access token: ${mask(tokenResponse.access_token)}`);
-  explain(`
-(There's no refresh_token in that response, on purpose -- wowauth keeps
-that to itself and handles renewing your access from here on. That's the
-whole point of using wowauth instead of talking to Nmbrs directly.)
-`);
 
-  step(9, "Find the connected user");
+  step(11, "Find the connected user");
   const users = await call<{ user_id: string; label?: string }[]>("GET", `${adminUrl}/apps/${appId}/users`, {
     headers: adminHeaders,
     maskHeaders: ["Authorization"],
+    quiet: true,
   });
   const userId = users[0]?.user_id;
   if (!userId) fail("No connected user found -- something went wrong above.");
   console.log(`  ✓ user_id: ${userId}${users[0]?.label ? ` (labeled "${users[0].label}")` : ""}`);
 
-  step(10, "Save these");
+  step(12, "Save these");
+  const secretsPath = "./nmbrs-secrets.json";
+  const secrets = {
+    wowauth: { admin_url: adminUrl, config_secret: configSecret },
+    connection: {
+      name: connectionName,
+      app_id: appId,
+      user_id: userId,
+      private_key: { format: "x25519-raw-base64", value: privateKeyB64 },
+      subscription_key: subscriptionKey,
+    },
+  };
+  writeFileSync(secretsPath, JSON.stringify(secrets, null, 2), { mode: 0o600 });
   console.log(`
-  APP_ID       = ${appId}
-  USER_ID      = ${userId}
-  PRIVATE_KEY  = ${keyPath}
-
-  Any script pulling a fresh Nmbrs token from now on needs these three
-  plus your CONFIG_SECRET -- and nothing else. No more browser logins.
+  ✓ Saved to ${secretsPath} (readable only by you -- treat it like a database
+    credential, never commit it; see docs/examples/fuse-secrets.schema.json
+    for its shape). That's all you'll need going forward -- no more browser
+    logins.
 `);
 
-  step(11, "Prove it works");
-  explain(`
-Two real calls: the first is exactly what a recurring script calls to get
-a token going forward (wowauth refreshes it automatically once it's
-expired); the second uses a token against Nmbrs itself.
-`);
+  step(13, "Prove it works");
   const tokenInfo = await call<{ token: string; expires_at?: string }>(
     "GET",
     `${adminUrl}/apps/${appId}/users/${userId}/token`,
@@ -445,19 +575,19 @@ expired); the second uses a token against Nmbrs itself.
   console.log(`
   wowauth returned: ${mask(tokenInfo.token)}
 
-  That's expected to look like gibberish -- it's encrypted to the public
-  key from step 2, so only ${keyPath} can decrypt it. Decrypting it is a
-  job for the actual integration script that uses this connection day to
-  day, not this setup script (see docs/examples/DEFAULT.md step 7 for how,
-  in Python, or use an HPKE library in whatever language that script is
-  in).
+  That's expected to look like gibberish -- it's encrypted, and only the
+  private key in ${secretsPath} can decrypt it (see docs/examples/DEFAULT.md
+  step 7 for how).
 
-  To prove the Nmbrs connection itself works right now, here's the plain
-  access token this script already has in memory from step 8:
+  Here's today's plain access token, to prove the Nmbrs connection itself
+  works right now:
 `);
 
   const smokeTest = await fetch(NMBRS_SMOKE_TEST_URL, {
-    headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+    headers: {
+      Authorization: `Bearer ${tokenResponse.access_token}`,
+      "X-Subscription-Key": subscriptionKey,
+    },
   });
   console.log(`  → GET ${NMBRS_SMOKE_TEST_URL}`);
   console.log(`  ← ${smokeTest.status} ${smokeTest.statusText}`);
@@ -469,22 +599,19 @@ expired); the second uses a token against Nmbrs itself.
 
   console.log(`
 ${"─".repeat(70)}
-All done. Two commands to check this connection any time -- unlike
-everywhere else in this script, these are shown in full since you need
-the real values to actually run them:
+All done. Two commands to check this connection any time:
 
-1) Get a fresh (encrypted) token from wowauth -- what a recurring script
-   would call:
+1) Get a fresh token from wowauth:
 
 curl -s "${adminUrl}/apps/${appId}/users/${userId}/token" \\
   -H "Authorization: Bearer ${configSecret}" | jq .
 
-2) Use today's access token directly against Nmbrs, to confirm the
-   connection works right now (this token won't stay valid forever --
-   it's only for this quick check):
+2) Confirm the connection works right now (this token won't stay valid
+   forever):
 
 curl -s "${NMBRS_SMOKE_TEST_URL}" \\
-  -H "Authorization: Bearer ${tokenResponse.access_token}"
+  -H "Authorization: Bearer ${tokenResponse.access_token}" \\
+  -H "X-Subscription-Key: ${subscriptionKey}"
 ${"─".repeat(70)}
 `);
 

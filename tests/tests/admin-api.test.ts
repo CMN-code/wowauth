@@ -15,6 +15,7 @@ const DUMMY_ID = "00000000-0000-0000-0000-000000000000";
 const ADMIN_ENDPOINTS: { method: string; path: string; body?: unknown }[] = [
   { method: "POST", path: "/apps", body: {} },
   { method: "PATCH", path: `/apps/${DUMMY_ID}`, body: {} },
+  { method: "GET", path: "/apps/by-name/nonexistent" },
   { method: "GET", path: `/apps/${DUMMY_ID}/status` },
   { method: "GET", path: `/apps/${DUMMY_ID}/users` },
   { method: "DELETE", path: `/apps/${DUMMY_ID}/users/${DUMMY_ID}` },
@@ -67,6 +68,38 @@ describe("admin API app management", () => {
     expect(created.error, JSON.stringify(created.error)).toBeUndefined();
     expect(JSON.stringify(created.data)).not.toContain("super-secret-value");
     expect(created.data).not.toHaveProperty("client_secret");
+  });
+
+  it("looks up an app by name, and never echoes client_secret there either", async () => {
+    const { publicKeyB64 } = await generateTestKeypair();
+    const created = await client.POST("/apps", {
+      body: createAppBody({
+        name: "admin-api-by-name-test",
+        client_id: "cid",
+        client_secret: "super-secret-value",
+        auth_url: "https://example.com/authorize",
+        token_url: "https://example.com/token",
+        redirect_url: "https://example.com/callback",
+        allowed_redirect_uris: [],
+        public_key: publicKeyB64,
+      }),
+    });
+    expect(created.error, JSON.stringify(created.error)).toBeUndefined();
+
+    const found = await client.GET("/apps/by-name/{name}", {
+      params: { path: { name: "admin-api-by-name-test" } },
+    });
+    expect(found.error, JSON.stringify(found.error)).toBeUndefined();
+    expect(found.data?.id).toBe(created.data!.id);
+    expect(JSON.stringify(found.data)).not.toContain("super-secret-value");
+    expect(found.data).not.toHaveProperty("client_secret");
+  });
+
+  it("404s looking up a name that was never registered", async () => {
+    const res = await client.GET("/apps/by-name/{name}", {
+      params: { path: { name: "does-not-exist" } },
+    });
+    expect(res.response.status).toBe(404);
   });
 
   it("rejects a malformed public_key on create, without creating the app", async () => {

@@ -1,0 +1,8 @@
+# ! Do NOT use this file directly. Use `just package`
+
+services:
+  api:
+    build:
+      context: ../
+      dockerfile: ./build/Dockerfile
+    image: ghcr.io/cmn-code/wowauth:${BUILD_HASH}

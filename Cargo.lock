@@ -1037,6 +1037,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1114,6 +1123,15 @@ dependencies = [
  "migrations_internals",
  "proc-macro2",
  "quote",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
@@ -2719,8 +2737,8 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "dotenvy",
- "hpke",
  "libsqlite3-sys",
+ "mimalloc",
  "oauth2",
  "poem",
  "poem-openapi",
@@ -2733,6 +2751,29 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wowauth-token-seal",
+]
+
+[[package]]
+name = "wowauth-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "wowauth-token-seal",
+]
+
+[[package]]
+name = "wowauth-token-seal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "hpke",
 ]
 
 [[package]]
