@@ -5,7 +5,7 @@ minimum-cli-version = "1.12.0"
 [install]
 
 # Rust toolchain, yes this version number is for the entire toolchain!
-rust-toolchain.flake = "path:./nix/rust-toolchain#rust-1_96_0"
+rust-toolchain.flake = "github:cmn-code/nix#rust-1_96_0"
 
 # Build dependencies
 gcc.pkg-path = "gcc"

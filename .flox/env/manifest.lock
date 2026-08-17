@@ -49,7 +49,7 @@
         "pkg-path": "python3"
       },
       "rust-toolchain": {
-        "flake": "path:./nix/rust-toolchain#rust-1_96_0"
+        "flake": "github:cmn-code/nix#rust-1_96_0"
       },
       "watchexec": {
         "pkg-path": "watchexec"
@@ -1250,8 +1250,8 @@
     },
     {
       "install_id": "rust-toolchain",
-      "locked-url": "path:/home/max/cmn/wowauth/nix/rust-toolchain?lastModified=1786803178&narHash=sha256-ZMMTx5QBdzLhOJ8l255rQ/uQwWwUc4gnX5xexBZ67o0%3D",
-      "flake-description": "Rust toolchains for WowAuth",
+      "locked-url": "github:cmn-code/nix/07adc121d4ec84a38d328fc4a2da8056c8f0e432?narHash=sha256-nU3r3oRdhteFp11/eNFXDHMuy48C93v8cSo/F%2BNlVOY%3D",
+      "flake-description": "Toolchain definitions, currently only consisting of Rust",
       "locked-flake-attr-path": "packages.aarch64-darwin.rust-1_96_0",
       "derivation": "/nix/store/7q5bjv8sdik14ncx1f3flnq37kx4fp4w-rust-default-1.96.0.drv",
       "outputs": {
@@ -1275,8 +1275,8 @@
     },
     {
       "install_id": "rust-toolchain",
-      "locked-url": "path:/home/max/cmn/wowauth/nix/rust-toolchain?lastModified=1786803178&narHash=sha256-ZMMTx5QBdzLhOJ8l255rQ/uQwWwUc4gnX5xexBZ67o0%3D",
-      "flake-description": "Rust toolchains for WowAuth",
+      "locked-url": "github:cmn-code/nix/07adc121d4ec84a38d328fc4a2da8056c8f0e432?narHash=sha256-nU3r3oRdhteFp11/eNFXDHMuy48C93v8cSo/F%2BNlVOY%3D",
+      "flake-description": "Toolchain definitions, currently only consisting of Rust",
       "locked-flake-attr-path": "packages.aarch64-linux.rust-1_96_0",
       "derivation": "/nix/store/n0vw11k6l6w8fbd94v49kka296d7bh6l-rust-default-1.96.0.drv",
       "outputs": {
@@ -1300,8 +1300,8 @@
     },
     {
       "install_id": "rust-toolchain",
-      "locked-url": "path:/home/max/cmn/wowauth/nix/rust-toolchain?lastModified=1786803178&narHash=sha256-ZMMTx5QBdzLhOJ8l255rQ/uQwWwUc4gnX5xexBZ67o0%3D",
-      "flake-description": "Rust toolchains for WowAuth",
+      "locked-url": "github:cmn-code/nix/07adc121d4ec84a38d328fc4a2da8056c8f0e432?narHash=sha256-nU3r3oRdhteFp11/eNFXDHMuy48C93v8cSo/F%2BNlVOY%3D",
+      "flake-description": "Toolchain definitions, currently only consisting of Rust",
       "locked-flake-attr-path": "packages.x86_64-darwin.rust-1_96_0",
       "derivation": "/nix/store/iciayn2h8xsl6zgj5h7kd4xqcckd8myl-rust-default-1.96.0.drv",
       "outputs": {
@@ -1325,8 +1325,8 @@
     },
     {
       "install_id": "rust-toolchain",
-      "locked-url": "path:/home/max/cmn/wowauth/nix/rust-toolchain?lastModified=1786803178&narHash=sha256-ZMMTx5QBdzLhOJ8l255rQ/uQwWwUc4gnX5xexBZ67o0%3D",
-      "flake-description": "Rust toolchains for WowAuth",
+      "locked-url": "github:cmn-code/nix/07adc121d4ec84a38d328fc4a2da8056c8f0e432?narHash=sha256-nU3r3oRdhteFp11/eNFXDHMuy48C93v8cSo/F%2BNlVOY%3D",
+      "flake-description": "Toolchain definitions, currently only consisting of Rust",
       "locked-flake-attr-path": "packages.x86_64-linux.rust-1_96_0",
       "derivation": "/nix/store/c2xbacvg5297s9nsbfixqq9g1b2kq7jw-rust-default-1.96.0.drv",
       "outputs": {
