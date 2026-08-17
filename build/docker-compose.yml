@@ -5,4 +5,4 @@ services:
     build:
       context: ../
       dockerfile: ./build/Dockerfile
-    image: ghcr.io/cmn-code/fuse/wowauth:${BUILD_HASH}
+    image: ghcr.io/cmn-code/wowauth:${BUILD_HASH}

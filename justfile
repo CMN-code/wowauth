@@ -11,7 +11,7 @@ version := `sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1`
 # Used for displaying build info inside the app
 build_name := version + "-" + commit_hash + " " + `date '+%d-%m-%Y %H:%M'`
 
-image := "ghcr.io/cmn-code/fuse/wowauth"
+image := "ghcr.io/cmn-code/wowauth"
 
 #
 # Building and packaging
@@ -38,7 +38,7 @@ release: package
     docker push {{ image }}:latest
 
 package-run tag="latest":
-    docker run --rm -it -p 3000:3000 ghcr.io/cmn-code/fuse/wowauth:{{tag}}
+    docker run --rm -it -p 3000:3000 ghcr.io/cmn-code/wowauth:{{tag}}
 
 #
 # Formatting, linting and testing
