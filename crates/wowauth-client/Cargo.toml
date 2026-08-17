@@ -11,6 +11,7 @@ wowauth-token-seal.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+eserde.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 

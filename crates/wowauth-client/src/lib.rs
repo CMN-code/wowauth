@@ -23,7 +23,8 @@
 //! }
 //! ```
 
-use serde::{Deserialize, Serialize};
+use eserde::Deserialize;
+use serde::Serialize;
 
 /// Everything needed to fetch a fresh token from one wowauth app connection,
 /// for one authorized user, plus whatever the upstream provider needs beyond
