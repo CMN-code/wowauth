@@ -30,6 +30,9 @@ watchexec.pkg-path = "watchexec"
 curl.pkg-path = "curl"
 jq.pkg-path = "jq"
 python3.pkg-path = "python3"
+git.pkg-path = "git"
+zig.pkg-path = "zig"
+cargo-zigbuild.pkg-path = "cargo-zigbuild"
 
 # Platform-specific packages
 

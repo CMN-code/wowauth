@@ -19,7 +19,7 @@ image := "ghcr.io/cmn-code/fuse/wowauth"
 
 # Target used by CI for buildling static release binary
 build:
-    cargo build --release --target=x86_64-unknown-linux-musl
+    cargo zigbuild --release --target=x86_64-unknown-linux-musl
 
 flox-build:
     BUILD_INFO="{{ build_name }}" flox build
