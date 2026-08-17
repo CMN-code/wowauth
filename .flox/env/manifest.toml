@@ -33,6 +33,7 @@ python3.pkg-path = "python3"
 git.pkg-path = "git"
 zig.pkg-path = "zig"
 cargo-zigbuild.pkg-path = "cargo-zigbuild"
+bun.pkg-path = "bun"
 
 # Platform-specific packages
 
