@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: fusebox
+    runs-on: hetzner
     permissions:
       contents: read
       packages: write
