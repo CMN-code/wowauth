@@ -5,7 +5,7 @@ on:
 
 jobs:
   lint:
-    runs-on: temp-max
+    runs-on: fusebox
     permissions:
       contents: read
       packages: write
