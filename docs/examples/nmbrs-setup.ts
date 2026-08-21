@@ -548,7 +548,7 @@ address bar and paste it below.
   step(12, "Save these");
   const secretsPath = "./nmbrs-secrets.json";
   const secrets = {
-    specifc: { subscription_key: subscriptionKey, },
+    specific: { subscription_key: subscriptionKey, },
     connection: {
       name: connectionName,
       app_id: appId,
