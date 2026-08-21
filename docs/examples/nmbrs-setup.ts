@@ -549,7 +549,7 @@ address bar and paste it below.
   const secretsPath = "./nmbrs-secrets.json";
   const secrets = {
     specific: { subscription_key: subscriptionKey, },
-    connection: {
+    wowauth: {
       name: connectionName,
       app_id: appId,
       user_id: userId,
