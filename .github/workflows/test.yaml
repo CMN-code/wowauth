@@ -5,7 +5,7 @@ on:
 
 jobs:
   test:
-    runs-on: fusebox
+    runs-on: temp-max
     permissions:
       contents: read
       packages: write
