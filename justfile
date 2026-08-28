@@ -69,6 +69,9 @@ integration-test-fast test_name="":
 nmbrs-setup:
     @bun run docs/examples/nmbrs-setup.ts
 
+exact-setup:
+    @bun run docs/examples/exact-setup.ts
+
 #
 # Development
 #

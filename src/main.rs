@@ -97,7 +97,14 @@ async fn main() -> anyhow::Result<()> {
             let res = ep.call(req).await;
             match &res {
                 Ok(resp) => tracing::info!(%method, %path, status = %resp.status()),
-                Err(err) => tracing::warn!(%method, %path, status = %err.status()),
+                // `err` is always something we constructed ourselves (db
+                // errors, decrypt failures, etc.) -- never raw request
+                // headers/query -- so logging its message here doesn't
+                // violate the no-secrets rule above.
+                Err(err) if err.status().is_server_error() => {
+                    tracing::error!(%method, %path, status = %err.status(), error = %err)
+                }
+                Err(err) => tracing::warn!(%method, %path, status = %err.status(), error = %err),
             }
             res
         });

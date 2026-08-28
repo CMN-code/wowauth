@@ -104,6 +104,32 @@ struct AppView {
 
 impl From<App> for AppView {
     fn from(app: App) -> Self {
+        let allowed_redirect_uris = serde_json::from_str(&app.allowed_redirect_uris)
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    app_id = %app.id,
+                    error = %err,
+                    "app has malformed allowed_redirect_uris in db, treating as empty"
+                );
+                Vec::new()
+            });
+        let extra_auth_params =
+            serde_json::from_str(&app.extra_auth_params).unwrap_or_else(|err| {
+                tracing::warn!(
+                    app_id = %app.id,
+                    error = %err,
+                    "app has malformed extra_auth_params in db, treating as empty"
+                );
+                HashMap::new()
+            });
+        let extra_headers = serde_json::from_str(&app.extra_headers).unwrap_or_else(|err| {
+            tracing::warn!(
+                app_id = %app.id,
+                error = %err,
+                "app has malformed extra_headers in db, treating as empty"
+            );
+            HashMap::new()
+        });
         Self {
             id: app.id,
             name: app.name,
@@ -111,12 +137,11 @@ impl From<App> for AppView {
             auth_url: app.auth_url,
             token_url: app.token_url,
             redirect_url: app.redirect_url,
-            allowed_redirect_uris: serde_json::from_str(&app.allowed_redirect_uris)
-                .unwrap_or_default(),
+            allowed_redirect_uris,
             scopes: app.scopes,
             token_auth_method: app.token_auth_method,
-            extra_auth_params: serde_json::from_str(&app.extra_auth_params).unwrap_or_default(),
-            extra_headers: serde_json::from_str(&app.extra_headers).unwrap_or_default(),
+            extra_auth_params,
+            extra_headers,
             public_key: app.public_key,
         }
     }
@@ -136,6 +161,11 @@ struct UserView {
     user_id: String,
     label: Option<String>,
     scopes: String,
+}
+
+#[derive(Object)]
+struct DeleteUserView {
+    id: String,
 }
 
 impl From<Token> for UserView {
@@ -163,83 +193,16 @@ struct TokenInfo {
     expires_at: Option<DateTime<Utc>>,
 }
 
-// poem-openapi's `Payload` trait isn't implemented for `Box<Json<T>>`, so the
-// usual "box the large variant" fix isn't available for response enums.
-#[allow(clippy::large_enum_variant)]
 #[derive(ApiResponse)]
-enum CreateAppResponse {
+enum UniversalResponse<T: poem_openapi::types::Type + poem_openapi::types::ToJSON> {
     #[oai(status = 200)]
-    Ok(Json<AppView>),
-    #[oai(status = 400)]
-    BadRequest(PlainText<String>),
-    #[oai(status = 409)]
-    Conflict(PlainText<String>),
-}
-
-#[allow(clippy::large_enum_variant)]
-#[derive(ApiResponse)]
-enum UpdateAppResponse {
-    #[oai(status = 200)]
-    Ok(Json<AppView>),
+    Ok(Json<T>),
     #[oai(status = 400)]
     BadRequest(PlainText<String>),
     #[oai(status = 404)]
-    NotFound,
+    NotFound(PlainText<String>),
     #[oai(status = 409)]
     Conflict(PlainText<String>),
-}
-
-#[allow(clippy::large_enum_variant)]
-#[derive(ApiResponse)]
-enum GetAppResponse {
-    #[oai(status = 200)]
-    Ok(Json<AppView>),
-    #[oai(status = 404)]
-    NotFound,
-}
-
-#[derive(ApiResponse)]
-enum StatusResponse {
-    #[oai(status = 200)]
-    Ok(Json<AppStatus>),
-    #[oai(status = 404)]
-    NotFound,
-}
-
-#[derive(ApiResponse)]
-enum UsersResponse {
-    #[oai(status = 200)]
-    Ok(Json<Vec<UserView>>),
-    #[oai(status = 404)]
-    NotFound,
-}
-
-#[derive(ApiResponse)]
-enum DeleteUserResponse {
-    #[oai(status = 200)]
-    Ok,
-    #[oai(status = 404)]
-    NotFound,
-}
-
-#[derive(ApiResponse)]
-enum UserStatusResponse {
-    #[oai(status = 200)]
-    Ok(Json<UserStatus>),
-    #[oai(status = 404)]
-    NotFound,
-}
-
-#[derive(ApiResponse)]
-enum UserTokenResponse {
-    #[oai(status = 200)]
-    Ok(Json<TokenInfo>),
-    #[oai(status = 404)]
-    NotFound,
-    /// The access token is expired and either there's no refresh token or
-    /// the upstream provider rejected it — the user needs to reauth.
-    #[oai(status = 409)]
-    NeedsReauth,
 }
 
 pub struct Api;
@@ -253,9 +216,9 @@ impl Api {
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
         req: Json<CreateAppRequest>,
-    ) -> poem::Result<CreateAppResponse> {
+    ) -> poem::Result<UniversalResponse<AppView>> {
         if let Err(err) = wowauth_token_seal::validate_public_key(&req.0.public_key) {
-            return Ok(CreateAppResponse::BadRequest(PlainText(err.to_string())));
+            return Ok(UniversalResponse::BadRequest(PlainText(err.to_string())));
         }
 
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
@@ -267,23 +230,23 @@ impl Api {
             token_url: req.0.token_url,
             redirect_url: req.0.redirect_url,
             allowed_redirect_uris: serde_json::to_string(&req.0.allowed_redirect_uris)
-                .expect("Vec<String> always serializes"),
+                .map_err(poem::error::InternalServerError)?,
             scopes: req.0.scopes,
             token_auth_method: req.0.token_auth_method,
             extra_auth_params: serde_json::to_string(&req.0.extra_auth_params)
-                .expect("HashMap<String, String> always serializes"),
+                .map_err(poem::error::InternalServerError)?,
             extra_headers: serde_json::to_string(&req.0.extra_headers)
-                .expect("HashMap<String, String> always serializes"),
+                .map_err(poem::error::InternalServerError)?,
             public_key: req.0.public_key,
         };
 
         match repository::create_app(&mut conn, &state.cipher, new) {
-            Ok(app) => Ok(CreateAppResponse::Ok(Json(app.into()))),
+            Ok(app) => Ok(UniversalResponse::Ok(Json(app.into()))),
             Err(DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, info)) => Ok(
-                CreateAppResponse::Conflict(PlainText(info.message().to_string())),
+                UniversalResponse::Conflict(PlainText(info.message().to_string())),
             ),
             Err(DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, info)) => Ok(
-                CreateAppResponse::BadRequest(PlainText(info.message().to_string())),
+                UniversalResponse::BadRequest(PlainText(info.message().to_string())),
             ),
             Err(err) => Err(poem::error::InternalServerError(err)),
         }
@@ -297,11 +260,11 @@ impl Api {
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
         req: Json<UpdateAppRequest>,
-    ) -> poem::Result<UpdateAppResponse> {
+    ) -> poem::Result<UniversalResponse<AppView>> {
         if let Some(public_key) = &req.0.public_key
             && let Err(err) = wowauth_token_seal::validate_public_key(public_key)
         {
-            return Ok(UpdateAppResponse::BadRequest(PlainText(err.to_string())));
+            return Ok(UniversalResponse::BadRequest(PlainText(err.to_string())));
         }
 
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
@@ -318,27 +281,35 @@ impl Api {
             allowed_redirect_uris: req
                 .0
                 .allowed_redirect_uris
-                .map(|v| serde_json::to_string(&v).expect("Vec<String> always serializes")),
+                .map(|v| serde_json::to_string(&v).map_err(poem::error::InternalServerError))
+                .transpose()?,
             scopes: req.0.scopes,
             token_auth_method: req.0.token_auth_method,
-            extra_auth_params: req.0.extra_auth_params.map(|m| {
-                serde_json::to_string(&m).expect("HashMap<String, String> always serializes")
-            }),
-            extra_headers: req.0.extra_headers.map(|m| {
-                serde_json::to_string(&m).expect("HashMap<String, String> always serializes")
-            }),
+            extra_auth_params: req
+                .0
+                .extra_auth_params
+                .map(|m| serde_json::to_string(&m).map_err(poem::error::InternalServerError))
+                .transpose()?,
+            extra_headers: req
+                .0
+                .extra_headers
+                .map(|m| serde_json::to_string(&m).map_err(poem::error::InternalServerError))
+                .transpose()?,
             public_key: req.0.public_key,
             updated_at: None,
         };
 
         match repository::update_app(&mut conn, &app_id.0, changes) {
-            Ok(Some(app)) => Ok(UpdateAppResponse::Ok(Json(app.into()))),
-            Ok(None) => Ok(UpdateAppResponse::NotFound),
+            Ok(Some(app)) => Ok(UniversalResponse::Ok(Json(app.into()))),
+            Ok(None) => Ok(UniversalResponse::NotFound(PlainText(format!(
+                "app_id {} doesn't exist",
+                app_id.0
+            )))),
             Err(DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, info)) => Ok(
-                UpdateAppResponse::Conflict(PlainText(info.message().to_string())),
+                UniversalResponse::Conflict(PlainText(info.message().to_string())),
             ),
             Err(DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, info)) => Ok(
-                UpdateAppResponse::BadRequest(PlainText(info.message().to_string())),
+                UniversalResponse::BadRequest(PlainText(info.message().to_string())),
             ),
             Err(err) => Err(poem::error::InternalServerError(err)),
         }
@@ -351,13 +322,16 @@ impl Api {
         name: Path<String>,
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
-    ) -> poem::Result<GetAppResponse> {
+    ) -> poem::Result<UniversalResponse<AppView>> {
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
         match repository::get_app_by_name(&mut conn, &name.0)
             .map_err(poem::error::InternalServerError)?
         {
-            Some(app) => Ok(GetAppResponse::Ok(Json(app.into()))),
-            None => Ok(GetAppResponse::NotFound),
+            Some(app) => Ok(UniversalResponse::Ok(Json(app.into()))),
+            None => Ok(UniversalResponse::NotFound(PlainText(format!(
+                "app {} does not exist",
+                name.0
+            )))),
         }
     }
 
@@ -368,19 +342,22 @@ impl Api {
         app_id: Path<String>,
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
-    ) -> poem::Result<StatusResponse> {
+    ) -> poem::Result<UniversalResponse<AppStatus>> {
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
         let Some(app) =
             repository::get_app(&mut conn, &app_id.0).map_err(poem::error::InternalServerError)?
         else {
-            return Ok(StatusResponse::NotFound);
+            return Ok(UniversalResponse::NotFound(PlainText(format!(
+                "app {} does not exist",
+                app_id.0
+            ))));
         };
         let tokens = repository::list_tokens_for_app(&mut conn, &app_id.0)
             .map_err(poem::error::InternalServerError)?;
         let active_user_count = tokens.iter().filter(|t| is_active(t)).count() as i64;
         let user_count = tokens.len() as i64;
 
-        Ok(StatusResponse::Ok(Json(AppStatus {
+        Ok(UniversalResponse::Ok(Json(AppStatus {
             app_id: app.id,
             name: app.name,
             user_count,
@@ -396,18 +373,21 @@ impl Api {
         app_id: Path<String>,
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
-    ) -> poem::Result<UsersResponse> {
+    ) -> poem::Result<UniversalResponse<Vec<UserView>>> {
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
         if repository::get_app(&mut conn, &app_id.0)
             .map_err(poem::error::InternalServerError)?
             .is_none()
         {
-            return Ok(UsersResponse::NotFound);
+            return Ok(UniversalResponse::NotFound(PlainText(format!(
+                "app {} does not exit",
+                app_id.0
+            ))));
         }
 
         let tokens = repository::list_tokens_for_app(&mut conn, &app_id.0)
             .map_err(poem::error::InternalServerError)?;
-        Ok(UsersResponse::Ok(Json(
+        Ok(UniversalResponse::Ok(Json(
             tokens.into_iter().map(UserView::from).collect(),
         )))
     }
@@ -420,14 +400,14 @@ impl Api {
         user_id: Path<String>,
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
-    ) -> poem::Result<DeleteUserResponse> {
+    ) -> poem::Result<UniversalResponse<DeleteUserView>> {
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
         let deleted = repository::delete_token(&mut conn, &app_id.0, &user_id.0)
             .map_err(poem::error::InternalServerError)?;
         Ok(if deleted {
-            DeleteUserResponse::Ok
+            UniversalResponse::Ok(Json(DeleteUserView { id: user_id.0 }))
         } else {
-            DeleteUserResponse::NotFound
+            UniversalResponse::NotFound(PlainText(format!("user {} does not exist", user_id.0)))
         })
     }
 
@@ -439,12 +419,15 @@ impl Api {
         user_id: Path<String>,
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
-    ) -> poem::Result<UserStatusResponse> {
+    ) -> poem::Result<UniversalResponse<UserStatus>> {
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
         let Some(token) = repository::get_token(&mut conn, &app_id.0, &user_id.0)
             .map_err(poem::error::InternalServerError)?
         else {
-            return Ok(UserStatusResponse::NotFound);
+            return Ok(UniversalResponse::NotFound(PlainText(format!(
+                "user {} does not exist",
+                user_id.0
+            ))));
         };
 
         let status = if is_active(&token) {
@@ -452,7 +435,7 @@ impl Api {
         } else {
             "expired"
         };
-        Ok(UserStatusResponse::Ok(Json(UserStatus {
+        Ok(UniversalResponse::Ok(Json(UserStatus {
             user_id: token.id,
             status: status.to_string(),
             expires_at: token.expires_at.map(to_utc),
@@ -467,17 +450,23 @@ impl Api {
         user_id: Path<String>,
         _auth: AdminAuth,
         Data(state): Data<&AppState>,
-    ) -> poem::Result<UserTokenResponse> {
+    ) -> poem::Result<UniversalResponse<TokenInfo>> {
         let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
         let Some(app) =
             repository::get_app(&mut conn, &app_id.0).map_err(poem::error::InternalServerError)?
         else {
-            return Ok(UserTokenResponse::NotFound);
+            return Ok(UniversalResponse::NotFound(PlainText(format!(
+                "app {} does not exist",
+                app_id.0
+            ))));
         };
         let Some(token) = repository::get_token(&mut conn, &app_id.0, &user_id.0)
             .map_err(poem::error::InternalServerError)?
         else {
-            return Ok(UserTokenResponse::NotFound);
+            return Ok(UniversalResponse::NotFound(PlainText(format!(
+                "user {} does not exist",
+                user_id.0
+            ))));
         };
 
         let now = Utc::now().naive_utc();
@@ -485,31 +474,45 @@ impl Api {
 
         let (access_token_plaintext, expires_at) = if is_expired {
             let Some(refresh_token_enc) = &token.refresh_token else {
-                return Ok(UserTokenResponse::NeedsReauth);
+                tracing::warn!(app_id = %app_id.0, user_id = %user_id.0, "user needs reauth: token expired with no refresh token on file");
+                return Ok(UniversalResponse::Conflict(PlainText(
+                    "needs reauth".to_string(),
+                )));
             };
-            let refresh_token_plaintext = state
-                .cipher
-                .decrypt(refresh_token_enc)
-                .map_err(internal_error)?;
-            let refresh_token = String::from_utf8(refresh_token_plaintext)
-                .map_err(poem::error::InternalServerError)?;
+            let refresh_token_plaintext = state.cipher.decrypt(refresh_token_enc).map_err(|e| {
+                tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored refresh token");
+                internal_error(e)
+            })?;
+            let refresh_token = String::from_utf8(refresh_token_plaintext).map_err(|e| {
+                tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "decrypted refresh token was not utf8");
+                poem::error::InternalServerError(e)
+            })?;
 
-            let Ok(refreshed) = oauth_client::refresh(&app, &state.cipher, &refresh_token).await
-            else {
-                return Ok(UserTokenResponse::NeedsReauth);
+            let refreshed = match oauth_client::refresh(&app, &state.cipher, &refresh_token).await {
+                Ok(refreshed) => refreshed,
+                Err(err) => {
+                    tracing::error!(app_id = %app_id.0, user_id = %user_id.0, error = %err, "unable to refresh token from provider");
+                    return Ok(UniversalResponse::Conflict(PlainText(
+                        "unable to refresh token from provider".to_string(),
+                    )));
+                }
             };
 
             let new_expires_at = refreshed
                 .expires_in
                 .and_then(|d| chrono::Duration::from_std(d).ok())
                 .map(|d| now + d);
+
             // Providers don't always rotate the refresh token; keep the old
             // one if a new one wasn't issued.
             let new_refresh_token_enc = refreshed
                 .refresh_token
                 .as_ref()
                 .map(|t| state.cipher.encrypt(t.as_bytes()))
-                .or_else(|| token.refresh_token.clone());
+                .or_else(|| {
+                    tracing::warn!(app_id = %app_id.0, user_id = %user_id.0, "upstream did not rotate the refresh token, reusing existing one");
+                    token.refresh_token.clone()
+                });
 
             let updated = repository::save_refreshed_token(
                 &mut conn,
@@ -522,19 +525,22 @@ impl Api {
 
             (refreshed.access_token.into_bytes(), updated.expires_at)
         } else {
-            let plaintext = state
-                .cipher
-                .decrypt(&token.access_token)
-                .map_err(internal_error)?;
+            let plaintext = state.cipher.decrypt(&token.access_token).map_err(|e| {
+                tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored access token");
+                internal_error(e)
+            })?;
             (plaintext, token.expires_at)
         };
 
         let aad = format!("{}:{}", app_id.0, user_id.0);
         let sealed =
             wowauth_token_seal::seal(&app.public_key, &access_token_plaintext, aad.as_bytes())
-                .map_err(internal_error)?;
+                .map_err(|e| {
+                    tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "unable to seal access token to app public key");
+                    internal_error(e)
+                })?;
 
-        Ok(UserTokenResponse::Ok(Json(TokenInfo {
+        Ok(UniversalResponse::Ok(Json(TokenInfo {
             token: sealed,
             expires_at: expires_at.map(to_utc),
         })))

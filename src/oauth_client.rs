@@ -37,8 +37,15 @@ fn build_token_client(app: &App, cipher: &Cipher) -> Result<(TokenClient, reqwes
         )
         .set_auth_type(auth_type);
 
-    let extra_headers: HashMap<String, String> =
-        serde_json::from_str(&app.extra_headers).unwrap_or_default();
+    let extra_headers: HashMap<String, String> = serde_json::from_str(&app.extra_headers)
+        .unwrap_or_else(|err| {
+            tracing::warn!(
+                app_id = %app.id,
+                error = %err,
+                "app has malformed extra_headers in db, sending upstream request without them"
+            );
+            HashMap::new()
+        });
     let mut header_map = HeaderMap::new();
     for (name, value) in &extra_headers {
         header_map.insert(
@@ -133,8 +140,15 @@ pub fn build_authorization_request(app: &App, scopes: &str) -> Result<Authorizat
         .set_auth_uri(AuthUrl::new(app.auth_url.clone()).context("app has an invalid auth_url")?);
     let redirect_uri =
         RedirectUrl::new(app.redirect_url.clone()).context("app has an invalid redirect_url")?;
-    let extra_auth_params: HashMap<String, String> =
-        serde_json::from_str(&app.extra_auth_params).unwrap_or_default();
+    let extra_auth_params: HashMap<String, String> = serde_json::from_str(&app.extra_auth_params)
+        .unwrap_or_else(|err| {
+            tracing::warn!(
+                app_id = %app.id,
+                error = %err,
+                "app has malformed extra_auth_params in db, building authorize url without them"
+            );
+            HashMap::new()
+        });
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
     let mut request = client

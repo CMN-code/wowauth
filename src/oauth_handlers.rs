@@ -109,7 +109,8 @@ enum RevokeResponse {
 }
 
 fn redirect_with(base: &str, pairs: &[(&str, &str)]) -> Result<String, poem::Error> {
-    let mut url = url::Url::parse(base).map_err(|_| {
+    let mut url = url::Url::parse(base).map_err(|err| {
+        tracing::error!(redirect_uri = %base, error = %err, "flow's redirect_uri is not a valid url");
         poem::Error::from_string(
             "app has an invalid redirect_uri on file",
             poem::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -193,7 +194,14 @@ impl OauthApi {
         }
 
         let allowed: Vec<String> =
-            serde_json::from_str(&app.allowed_redirect_uris).unwrap_or_default();
+            serde_json::from_str(&app.allowed_redirect_uris).unwrap_or_else(|err| {
+                tracing::warn!(
+                    app_id = %app_id,
+                    error = %err,
+                    "app has malformed allowed_redirect_uris in db, rejecting all redirect_uris"
+                );
+                Vec::new()
+            });
         if !allowed.contains(&redirect_uri) {
             return Ok(AuthorizeResponse::BadRequest(PlainText(
                 "redirect_uri is not allow-listed for this app".to_string(),
@@ -285,12 +293,15 @@ impl OauthApi {
             return Ok(CallbackResponse::NotFound);
         };
 
-        let pkce_verifier_plaintext = app_state
-            .cipher
-            .decrypt(&flow.pkce_verifier)
-            .map_err(internal_error)?;
+        let pkce_verifier_plaintext = app_state.cipher.decrypt(&flow.pkce_verifier).map_err(|e| {
+            tracing::error!(app_id = %flow.app_id, flow_id = %flow.id, "unable to decrypt stored pkce verifier");
+            internal_error(e)
+        })?;
         let pkce_verifier = oauth2::PkceCodeVerifier::new(
-            String::from_utf8(pkce_verifier_plaintext).map_err(poem::error::InternalServerError)?,
+            String::from_utf8(pkce_verifier_plaintext).map_err(|e| {
+                tracing::error!(app_id = %flow.app_id, flow_id = %flow.id, "decrypted pkce verifier was not utf8");
+                poem::error::InternalServerError(e)
+            })?,
         );
 
         let upstream = match oauth_client::exchange_code(
@@ -302,7 +313,8 @@ impl OauthApi {
         .await
         {
             Ok(token) => token,
-            Err(_) => {
+            Err(err) => {
+                tracing::error!(app_id = %flow.app_id, error = %err, "upstream code exchange failed");
                 repository::delete_oauth_flow(&mut conn, &flow.id)
                     .map_err(poem::error::InternalServerError)?;
                 let location = redirect_with(
@@ -448,10 +460,13 @@ impl OauthApi {
 
         let presented = req.0.token.as_bytes();
         for candidate in tokens {
-            let is_match = state
-                .cipher
-                .decrypt(&candidate.access_token)
-                .is_ok_and(|plaintext| plaintext == presented);
+            let is_match = match state.cipher.decrypt(&candidate.access_token) {
+                Ok(plaintext) => plaintext == presented,
+                Err(err) => {
+                    tracing::warn!(app_id = %app_id.0, user_id = %candidate.id, error = %err, "unable to decrypt stored access token while checking for revoke match");
+                    false
+                }
+            };
             if is_match {
                 repository::delete_token(&mut conn, &app_id.0, &candidate.id)
                     .map_err(poem::error::InternalServerError)?;
