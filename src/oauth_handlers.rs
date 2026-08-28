@@ -6,6 +6,7 @@ use poem::web::Data;
 use poem_openapi::param::{Path, Query};
 use poem_openapi::payload::{Form, Json, PlainText};
 use poem_openapi::{ApiResponse, Object, OpenApi};
+use tracing::{error, warn};
 use uuid::Uuid;
 
 #[derive(Object)]
@@ -110,7 +111,7 @@ enum RevokeResponse {
 
 fn redirect_with(base: &str, pairs: &[(&str, &str)]) -> Result<String, poem::Error> {
     let mut url = url::Url::parse(base).map_err(|err| {
-        tracing::error!(redirect_uri = %base, error = %err, "flow's redirect_uri is not a valid url");
+        error!(redirect_uri = %base, error = %err, "flow's redirect_uri is not a valid url");
         poem::Error::from_string(
             "app has an invalid redirect_uri on file",
             poem::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -136,9 +137,15 @@ impl OauthApi {
         app_id: Path<String>,
         Data(state): Data<&AppState>,
     ) -> poem::Result<DiscoveryResponse> {
-        let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
+        let mut conn = state.pool.get().map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
         if repository::get_app(&mut conn, &app_id.0)
-            .map_err(poem::error::InternalServerError)?
+            .map_err(|e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            })?
             .is_none()
         {
             return Ok(DiscoveryResponse::NotFound);
@@ -177,17 +184,24 @@ impl OauthApi {
         Query(scope): Query<Option<String>>,
         Data(app_state): Data<&AppState>,
     ) -> poem::Result<AuthorizeResponse> {
-        let mut conn = app_state
-            .pool
-            .get()
-            .map_err(poem::error::InternalServerError)?;
-        let Some(app) =
-            repository::get_app(&mut conn, &app_id).map_err(poem::error::InternalServerError)?
+        let mut conn = app_state.pool.get().map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
+        let Some(app) = repository::get_app(&mut conn, &app_id).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?
         else {
             return Ok(AuthorizeResponse::NotFound);
         };
 
         if code_challenge_method != "S256" {
+            warn!(
+                app_id = %app_id,
+                code_challenge_method = %code_challenge_method,
+                "authorize rejected: unsupported code_challenge_method"
+            );
             return Ok(AuthorizeResponse::BadRequest(PlainText(
                 "code_challenge_method must be S256".to_string(),
             )));
@@ -195,7 +209,7 @@ impl OauthApi {
 
         let allowed: Vec<String> =
             serde_json::from_str(&app.allowed_redirect_uris).unwrap_or_else(|err| {
-                tracing::warn!(
+                warn!(
                     app_id = %app_id,
                     error = %err,
                     "app has malformed allowed_redirect_uris in db, rejecting all redirect_uris"
@@ -203,14 +217,21 @@ impl OauthApi {
                 Vec::new()
             });
         if !allowed.contains(&redirect_uri) {
+            warn!(
+                app_id = %app_id,
+                redirect_uri = %redirect_uri,
+                "authorize rejected: redirect_uri is not allow-listed for this app"
+            );
             return Ok(AuthorizeResponse::BadRequest(PlainText(
                 "redirect_uri is not allow-listed for this app".to_string(),
             )));
         }
 
         let scopes = scope.unwrap_or_else(|| app.scopes.clone());
-        let upstream =
-            oauth_client::build_authorization_request(&app, &scopes).map_err(internal_error)?;
+        let upstream = oauth_client::build_authorization_request(&app, &scopes).map_err(|err| {
+            error!(app_id = %app_id, error = %err, "failed to build upstream authorization request");
+            internal_error(err)
+        })?;
 
         repository::create_oauth_flow(
             &mut conn,
@@ -227,7 +248,10 @@ impl OauthApi {
                 caller_code_challenge: code_challenge,
             },
         )
-        .map_err(poem::error::InternalServerError)?;
+        .map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
 
         Ok(AuthorizeResponse::Redirect(upstream.url))
     }
@@ -243,29 +267,46 @@ impl OauthApi {
         error_description: Query<Option<String>>,
         Data(app_state): Data<&AppState>,
     ) -> poem::Result<CallbackResponse> {
-        let mut conn = app_state
-            .pool
-            .get()
-            .map_err(poem::error::InternalServerError)?;
-        let Some(flow) = repository::get_oauth_flow_by_state(&mut conn, &state.0)
-            .map_err(poem::error::InternalServerError)?
+        let mut conn = app_state.pool.get().map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
+        let Some(flow) = repository::get_oauth_flow_by_state(&mut conn, &state.0).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?
         else {
+            warn!(
+                app_id = %app_id.0,
+                "callback rejected: state is unknown or already used"
+            );
             return Ok(CallbackResponse::BadRequest(PlainText(
                 "unknown or already-used state".to_string(),
             )));
         };
 
         if flow.app_id != app_id.0 || flow.expires_at <= Utc::now().naive_utc() {
-            repository::delete_oauth_flow(&mut conn, &flow.id)
-                .map_err(poem::error::InternalServerError)?;
+            warn!(
+                app_id = %app_id.0,
+                flow_id = %flow.id,
+                flow_app_id = %flow.app_id,
+                expires_at = %flow.expires_at,
+                "callback rejected: flow expired or app_id in url does not match flow"
+            );
+            repository::delete_oauth_flow(&mut conn, &flow.id).map_err(|e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            })?;
             return Ok(CallbackResponse::BadRequest(PlainText(
                 "flow expired or does not match app".to_string(),
             )));
         }
 
         if let Some(error) = error.0 {
-            repository::delete_oauth_flow(&mut conn, &flow.id)
-                .map_err(poem::error::InternalServerError)?;
+            repository::delete_oauth_flow(&mut conn, &flow.id).map_err(|e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            })?;
             let description = error_description.0.unwrap_or_default();
             let location = redirect_with(
                 &flow.redirect_after,
@@ -279,27 +320,43 @@ impl OauthApi {
         }
 
         let Some(code) = code.0 else {
-            repository::delete_oauth_flow(&mut conn, &flow.id)
-                .map_err(poem::error::InternalServerError)?;
+            warn!(
+                app_id = %flow.app_id,
+                flow_id = %flow.id,
+                "callback rejected: upstream returned neither code nor error"
+            );
+            repository::delete_oauth_flow(&mut conn, &flow.id).map_err(|e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            })?;
             return Ok(CallbackResponse::BadRequest(PlainText(
                 "missing code".to_string(),
             )));
         };
-        let Some(app) = repository::get_app(&mut conn, &flow.app_id)
-            .map_err(poem::error::InternalServerError)?
+        let Some(app) = repository::get_app(&mut conn, &flow.app_id).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?
         else {
-            repository::delete_oauth_flow(&mut conn, &flow.id)
-                .map_err(poem::error::InternalServerError)?;
+            error!(
+                app_id = %flow.app_id,
+                flow_id = %flow.id,
+                "callback rejected: app for pending flow no longer exists"
+            );
+            repository::delete_oauth_flow(&mut conn, &flow.id).map_err(|e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            })?;
             return Ok(CallbackResponse::NotFound);
         };
 
         let pkce_verifier_plaintext = app_state.cipher.decrypt(&flow.pkce_verifier).map_err(|e| {
-            tracing::error!(app_id = %flow.app_id, flow_id = %flow.id, "unable to decrypt stored pkce verifier");
+            error!(app_id = %flow.app_id, flow_id = %flow.id, "unable to decrypt stored pkce verifier");
             internal_error(e)
         })?;
         let pkce_verifier = oauth2::PkceCodeVerifier::new(
             String::from_utf8(pkce_verifier_plaintext).map_err(|e| {
-                tracing::error!(app_id = %flow.app_id, flow_id = %flow.id, "decrypted pkce verifier was not utf8");
+                error!(app_id = %flow.app_id, flow_id = %flow.id, "decrypted pkce verifier was not utf8");
                 poem::error::InternalServerError(e)
             })?,
         );
@@ -314,9 +371,11 @@ impl OauthApi {
         {
             Ok(token) => token,
             Err(err) => {
-                tracing::error!(app_id = %flow.app_id, error = %err, "upstream code exchange failed");
-                repository::delete_oauth_flow(&mut conn, &flow.id)
-                    .map_err(poem::error::InternalServerError)?;
+                error!(app_id = %flow.app_id, error = %err, "upstream code exchange failed");
+                repository::delete_oauth_flow(&mut conn, &flow.id).map_err(|e| {
+                    error!("{:?}", e);
+                    poem::error::InternalServerError(e)
+                })?;
                 let location = redirect_with(
                     &flow.redirect_after,
                     &[("error", "server_error"), ("state", &flow.caller_state)],
@@ -347,14 +406,21 @@ impl OauthApi {
             expires_at,
             flow.external_account_hint,
         )
-        .map_err(poem::error::InternalServerError)?;
+        .map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
 
         // The flow row survives, now representing a fresh, short-lived,
         // single-use code redeemable at /oauth/token instead of a pending
         // authorization attempt.
         let issued_code = Uuid::new_v4().to_string();
-        repository::mark_flow_issued(&mut conn, &flow.id, &issued_code, &token.id)
-            .map_err(poem::error::InternalServerError)?;
+        repository::mark_flow_issued(&mut conn, &flow.id, &issued_code, &token.id).map_err(
+            |e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            },
+        )?;
 
         let location = redirect_with(
             &flow.redirect_after,
@@ -372,6 +438,11 @@ impl OauthApi {
         req: Form<TokenRequest>,
     ) -> poem::Result<TokenEndpointResponse> {
         if req.0.grant_type != "authorization_code" {
+            warn!(
+                app_id = %app_id.0,
+                grant_type = %req.0.grant_type,
+                "token exchange rejected: unsupported grant_type"
+            );
             return Ok(TokenEndpointResponse::BadRequest(oauth_error(
                 "unsupported_grant_type",
                 "only authorization_code is supported",
@@ -386,24 +457,44 @@ impl OauthApi {
             )));
         };
 
-        let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
-        let Some(flow) = repository::get_oauth_flow_by_code(&mut conn, code)
-            .map_err(poem::error::InternalServerError)?
+        let mut conn = state.pool.get().map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
+        let Some(flow) = repository::get_oauth_flow_by_code(&mut conn, code).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?
         else {
+            warn!(
+                app_id = %app_id.0,
+                "token exchange rejected: code is unknown or already used"
+            );
             return Ok(TokenEndpointResponse::BadRequest(oauth_error(
                 "invalid_grant",
                 "code is unknown, expired, or already used",
             )));
         };
         // Single-use regardless of outcome below.
-        repository::delete_oauth_flow(&mut conn, &flow.id)
-            .map_err(poem::error::InternalServerError)?;
+        repository::delete_oauth_flow(&mut conn, &flow.id).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
 
-        let valid = flow.app_id == app_id.0
-            && flow.expires_at > Utc::now().naive_utc()
-            && &flow.redirect_after == redirect_uri
-            && pkce::verify_s256(code_verifier, &flow.caller_code_challenge);
-        if !valid {
+        let app_id_mismatch = flow.app_id != app_id.0;
+        let expired = flow.expires_at <= Utc::now().naive_utc();
+        let redirect_uri_mismatch = &flow.redirect_after != redirect_uri;
+        let pkce_mismatch = !pkce::verify_s256(code_verifier, &flow.caller_code_challenge);
+        if app_id_mismatch || expired || redirect_uri_mismatch || pkce_mismatch {
+            warn!(
+                app_id = %app_id.0,
+                flow_id = %flow.id,
+                app_id_mismatch,
+                expired,
+                redirect_uri_mismatch,
+                pkce_mismatch,
+                "token exchange rejected: flow validation failed"
+            );
             return Ok(TokenEndpointResponse::BadRequest(oauth_error(
                 "invalid_grant",
                 "code is unknown, expired, or already used",
@@ -411,26 +502,42 @@ impl OauthApi {
         }
 
         let Some(token_id) = flow.token_id else {
+            error!(
+                app_id = %app_id.0,
+                flow_id = %flow.id,
+                "token exchange rejected: flow was issued a code but has no token_id"
+            );
             return Ok(TokenEndpointResponse::BadRequest(oauth_error(
                 "invalid_grant",
                 "code is unknown, expired, or already used",
             )));
         };
-        let Some(token) = repository::get_token(&mut conn, &flow.app_id, &token_id)
-            .map_err(poem::error::InternalServerError)?
+        let Some(token) =
+            repository::get_token(&mut conn, &flow.app_id, &token_id).map_err(|e| {
+                error!("{:?}", e);
+                poem::error::InternalServerError(e)
+            })?
         else {
+            error!(
+                app_id = %app_id.0,
+                flow_id = %flow.id,
+                token_id = %token_id,
+                "token exchange rejected: underlying grant no longer exists"
+            );
             return Ok(TokenEndpointResponse::BadRequest(oauth_error(
                 "invalid_grant",
                 "the underlying grant no longer exists",
             )));
         };
 
-        let access_token = state
-            .cipher
-            .decrypt(&token.access_token)
-            .map_err(internal_error)?;
-        let access_token =
-            String::from_utf8(access_token).map_err(poem::error::InternalServerError)?;
+        let access_token = state.cipher.decrypt(&token.access_token).map_err(|e| {
+            warn!("{:?}", e);
+            internal_error(e)
+        })?;
+        let access_token = String::from_utf8(access_token).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
 
         // Deliberately no refresh_token in the response: wowauth keeps that
         // to itself and handles renewal server-side (via the proprietary
@@ -454,22 +561,29 @@ impl OauthApi {
         Data(state): Data<&AppState>,
         req: Form<RevokeRequest>,
     ) -> poem::Result<RevokeResponse> {
-        let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
-        let tokens = repository::list_tokens_for_app(&mut conn, &app_id.0)
-            .map_err(poem::error::InternalServerError)?;
+        let mut conn = state.pool.get().map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
+        let tokens = repository::list_tokens_for_app(&mut conn, &app_id.0).map_err(|e| {
+            error!("{:?}", e);
+            poem::error::InternalServerError(e)
+        })?;
 
         let presented = req.0.token.as_bytes();
         for candidate in tokens {
             let is_match = match state.cipher.decrypt(&candidate.access_token) {
                 Ok(plaintext) => plaintext == presented,
                 Err(err) => {
-                    tracing::warn!(app_id = %app_id.0, user_id = %candidate.id, error = %err, "unable to decrypt stored access token while checking for revoke match");
+                    warn!(app_id = %app_id.0, user_id = %candidate.id, error = %err, "unable to decrypt stored access token while checking for revoke match");
                     false
                 }
             };
             if is_match {
-                repository::delete_token(&mut conn, &app_id.0, &candidate.id)
-                    .map_err(poem::error::InternalServerError)?;
+                repository::delete_token(&mut conn, &app_id.0, &candidate.id).map_err(|e| {
+                    error!("{:?}", e);
+                    poem::error::InternalServerError(e)
+                })?;
                 break;
             }
         }
