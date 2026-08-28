@@ -209,6 +209,34 @@ pub struct Api;
 
 #[OpenApi]
 impl Api {
+    /// List apps
+    #[oai(path = "/apps", method = "get")]
+    async fn list_apps(
+        &self,
+        _auth: AdminAuth,
+        Data(state): Data<&AppState>,
+    ) -> poem::Result<Json<Vec<AppStatus>>> {
+        let mut conn = state.pool.get().map_err(poem::error::InternalServerError)?;
+        let apps = repository::list_apps(&mut conn).map_err(poem::error::InternalServerError)?;
+
+        let mut statuses = Vec::with_capacity(apps.len());
+        for app in apps {
+            let tokens = repository::list_tokens_for_app(&mut conn, &app.id)
+                .map_err(poem::error::InternalServerError)?;
+            let active_user_count = tokens.iter().filter(|t| is_active(t)).count() as i64;
+            let user_count = tokens.len() as i64;
+            statuses.push(AppStatus {
+                app_id: app.id,
+                name: app.name,
+                user_count,
+                active_user_count,
+                needs_reauth_count: user_count - active_user_count,
+            });
+        }
+
+        Ok(Json(statuses))
+    }
+
     /// Register a new app
     #[oai(path = "/apps", method = "post")]
     async fn create_app(

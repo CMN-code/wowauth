@@ -56,6 +56,13 @@ pub fn create_app(
         .get_result(conn)
 }
 
+pub fn list_apps(conn: &mut SqliteConnection) -> QueryResult<Vec<App>> {
+    apps::table
+        .select(App::as_select())
+        .order(apps::name.asc())
+        .load(conn)
+}
+
 pub fn get_app(conn: &mut SqliteConnection, app_id: &str) -> QueryResult<Option<App>> {
     apps::table
         .find(app_id)

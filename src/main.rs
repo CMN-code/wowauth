@@ -1,26 +1,19 @@
-mod auth;
-mod crypto;
-mod db;
-mod handlers;
-mod models;
-mod oauth_client;
-mod oauth_handlers;
-mod pkce;
-mod repository;
-mod schema;
-
-use std::net::{Ipv6Addr, SocketAddr};
-use std::sync::Arc;
-
 use anyhow::Context;
+use poem::endpoint::{EmbeddedFileEndpoint, EmbeddedFilesEndpoint};
 use poem::web::{Data, Json};
 use poem::{Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener};
-use poem_openapi::OpenApiService;
+use poem_openapi::{ApiResponse, OpenApi, OpenApiService};
+use rust_embed::Embed;
 use serde_json::{Value, json};
+use std::net::{Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
+use wowauth::crypto::Cipher;
+use wowauth::{AppState, db, handlers, oauth_handlers};
 
-use crate::crypto::Cipher;
-use crate::db::DbPool;
+#[derive(Embed)]
+#[folder = "./frontend/dist/"]
+struct Assets;
 
 // Avoid musl's default allocator due to lackluster performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
@@ -28,15 +21,22 @@ use crate::db::DbPool;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[derive(Clone)]
-struct AppState {
-    pool: DbPool,
-    cipher: Arc<Cipher>,
-    config_secret: String,
-    /// Used to build absolute URLs in the OIDC discovery document (e.g.
-    /// `https://wowauth.example.com`), since relative URIs aren't valid
-    /// there.
-    public_base_url: String,
+#[derive(ApiResponse)]
+enum RootResponse {
+    /// Redirect to the API docs
+    #[oai(status = 302)]
+    Redirect(#[oai(header = "Location")] String),
+}
+
+struct HomeApi;
+
+#[OpenApi(prefix_path = "/")]
+impl HomeApi {
+    /// Home page redirect
+    #[oai(path = "/", method = "get")]
+    async fn index(&self) -> RootResponse {
+        RootResponse::Redirect("/ui".to_string())
+    }
 }
 
 #[handler]
@@ -75,12 +75,14 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let api_service = OpenApiService::new(
-        (handlers::Api, oauth_handlers::OauthApi),
+        (handlers::Api, oauth_handlers::OauthApi, HomeApi),
         "wowauth",
         env!("CARGO_PKG_VERSION"),
     );
 
     let app = Route::new()
+        .nest("/ui", EmbeddedFileEndpoint::<Assets>::new("index.html"))
+        .nest("/assets", EmbeddedFilesEndpoint::<Assets>::new())
         .at("/health", get(health))
         .nest("/docs/schema", api_service.spec_endpoint())
         .nest("/docs/scalar", api_service.scalar())

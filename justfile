@@ -17,8 +17,23 @@ image := "ghcr.io/cmn-code/wowauth"
 # Building and packaging
 #
 
+
+schema:
+    mkdir -p openapi
+    cargo run --bin gen-schema > openapi/wowauth.json
+
+types: schema
+    mkdir -p ./frontend/src
+    mkdir -p ./frontend/dist
+    bunx openapi-typescript openapi/wowauth.json -o frontend/src/api-types.ts
+
+frontend: types
+    cd frontend && bun build src/main.ts --outdir dist --minify
+    cp frontend/index.html frontend/dist/index.html
+
+
 # Target used by CI for buildling static release binary
-build:
+build: frontend
     cargo zigbuild --release --target=x86_64-unknown-linux-musl
 
 flox-build:
@@ -77,7 +92,7 @@ exact-setup:
 #
 
 # Runs the server, restarting on source changes
-dev:
+dev: frontend
     @watchexec -r -e rs -- cargo run
 
 run:
