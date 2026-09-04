@@ -15,7 +15,7 @@ export const EXACT_COUNTRIES: { label: string; domain: string }[] = [
   { label: "United States / rest of world", domain: "start.exactonline.com" },
 ];
 
-export const EXACT_APP_CENTER_URL = "https://apps.exactonline.com";
+export const EXACT_APP_CENTER_URL = "https://start.exactonline.nl";
 
 // A light, read-only call used at the end to prove the connection actually
 // works against real Exact data -- also the standard way to discover which
