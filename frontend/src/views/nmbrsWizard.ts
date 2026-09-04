@@ -13,7 +13,7 @@ import {
 import { escapeHtml, reportError } from "../util";
 import { generateX25519KeyPair, pkceChallenge, randomPkceVerifier, randomState } from "../webcrypto";
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type Step = 1 | 2 | 3 | 4;
 
 const DEFAULT_PUBLIC_URL = "https://wowauth.fuse.creativemedianetwork.com";
 
@@ -33,8 +33,6 @@ interface Model {
   accessToken: string;
   userId: string;
   userLabel?: string;
-  busy: boolean;
-  error: string;
 }
 
 function freshModel(): Model {
@@ -53,95 +51,13 @@ function freshModel(): Model {
     pkceVerifier: "",
     accessToken: "",
     userId: "",
-    busy: false,
-    error: "",
   };
 }
 
 let model: Model = freshModel();
 
-// The wizard's own redirect_uri round-trips through Nmbrs's login page, so
-// the tab genuinely navigates away and back -- sessionStorage is what
-// survives that, unlike the in-memory `model` above.
-interface StashedState {
-  appId: string;
-  publicUrl: string;
-  connectionName: string;
-  subscriptionKey: string;
-  publicKeyB64: string;
-  privateKeyB64: string;
-  redirectUri: string;
-  oauthState: string;
-  pkceVerifier: string;
-}
-
-const STASH_KEY = "wowauth_nmbrs_wizard";
-
-function stashState(s: StashedState): void {
-  sessionStorage.setItem(STASH_KEY, JSON.stringify(s));
-}
-
-function popStashedState(): StashedState | null {
-  const raw = sessionStorage.getItem(STASH_KEY);
-  sessionStorage.removeItem(STASH_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as StashedState;
-  } catch {
-    return null;
-  }
-}
-
 export async function renderNmbrsWizard(container: HTMLElement): Promise<void> {
-  const params = new URLSearchParams(location.search);
-  const returning = params.has("code") || params.has("error");
-
-  if (!returning) {
-    model = freshModel();
-    render(container);
-    return;
-  }
-
-  // Codes are single-use -- strip them from the address bar immediately so
-  // a page refresh can't try to redeem the same one twice.
-  history.replaceState(null, "", location.pathname + location.hash);
-
-  const stash = popStashedState();
-  if (!stash) {
-    container.innerHTML = `<div class="card"><p class="error">Lost track of this connection attempt (maybe the tab was closed or reloaded mid-flow). Start over.</p><div class="row"><a href="#/nmbrs/new"><button class="secondary">Start over</button></a></div></div>`;
-    return;
-  }
-
-  model = { ...freshModel(), ...stash, step: 6 };
-
-  const error = params.get("error");
-  if (error) {
-    model.error = `Nmbrs (via wowauth) reported an error: ${error} ${params.get("error_description") ?? ""}`;
-    render(container);
-    return;
-  }
-  if (params.get("state") !== stash.oauthState) {
-    model.error = "The state returned didn't match what we sent -- aborting for safety.";
-    render(container);
-    return;
-  }
-  const code = params.get("code");
-  if (!code) {
-    model.error = "No authorization code was received.";
-    render(container);
-    return;
-  }
-
-  model.busy = true;
-  render(container);
-  try {
-    await finishAfterLogin(code);
-    model.busy = false;
-    model.step = 7;
-  } catch (err) {
-    model.busy = false;
-    model.error = err instanceof Error ? err.message : String(err);
-  }
+  model = freshModel();
   render(container);
 }
 
@@ -173,25 +89,17 @@ function render(container: HTMLElement): void {
     case 1:
       return renderStep1(container);
     case 2:
-      void renderStep2(container);
-      return;
+      return renderStep2(container);
     case 3:
-      return renderStep3(container);
-    case 4:
-      void renderStep4(container);
+      void renderStep3(container);
       return;
-    case 5:
-      return renderStep5(container);
-    case 6:
-      return renderStep6(container);
-    case 7:
-      return renderStep7(container);
+    case 4:
+      return renderStep4(container);
   }
 }
 
 function wireBack(container: HTMLElement, prevStep: Step): void {
   container.querySelector("#back")?.addEventListener("click", () => {
-    model.error = "";
     model.step = prevStep;
     render(container);
   });
@@ -201,7 +109,6 @@ function renderStep1(container: HTMLElement): void {
   container.innerHTML = `
     <div class="card">
       <h2>Connect Nmbrs</h2>
-      <p class="hint">Step 1 of 7 — Where is wowauth, and your Nmbrs subscription key</p>
       <form id="step-form">
         <label>wowauth's public URL
           <span class="hint">Where Nmbrs (and you, later) can reach this wowauth instance. Must be a real https address — Nmbrs won't accept localhost.</span>
@@ -215,77 +122,21 @@ function renderStep1(container: HTMLElement): void {
           <span class="hint">A short name for this app registration in wowauth.</span>
           <input type="text" name="connectionName" value="${escapeHtml(model.connectionName)}" required />
         </label>
-        <div class="row"><button type="submit">Continue</button></div>
-      </form>
-    </div>
-  `;
-  const form = container.querySelector<HTMLFormElement>("#step-form")!;
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const data = new FormData(form);
-    model.publicUrl = String(data.get("publicUrl") ?? "").trim().replace(/\/+$/, "") || DEFAULT_PUBLIC_URL;
-    model.subscriptionKey = String(data.get("subscriptionKey") ?? "").trim();
-    model.connectionName = String(data.get("connectionName") ?? "").trim() || "nmbrs";
-    model.step = 2;
-    render(container);
-  });
-}
-
-async function renderStep2(container: HTMLElement): Promise<void> {
-  container.innerHTML = `<div class="card"><p class="hint">Step 2 of 7 — Generating an encryption key…</p></div>`;
-  if (!model.publicKeyB64) {
-    try {
-      const kp = await generateX25519KeyPair();
-      model.publicKeyB64 = kp.publicKeyB64;
-      model.privateKeyB64 = kp.privateKeyB64;
-    } catch (err) {
-      container.innerHTML = `
-        <div class="card">
-          <p class="error">Couldn't generate an encryption key in this browser: ${escapeHtml(err instanceof Error ? err.message : String(err))}.
-          Try a recent version of Chrome, Firefox, or Safari.</p>
-          <div class="row"><button class="secondary" id="back">Back</button></div>
+        <label>Nmbrs scopes
+          <span class="hint">${escapeHtml(NMBRS_MANDATORY_SCOPES.join(", "))} is always requested — wowauth needs it to refresh tokens.</span>
+        </label>
+        <div class="scope-list">
+          ${NMBRS_OPTIONAL_SCOPES.map(
+            (s) => `
+            <label class="scope-row">
+              <input type="checkbox" value="${escapeHtml(s)}" ${model.selectedScopes.has(s) ? "checked" : ""} />
+              ${escapeHtml(s)}
+            </label>`,
+          ).join("")}
         </div>
-      `;
-      wireBack(container, 1);
-      return;
-    }
-  }
-  container.innerHTML = `
-    <div class="card">
-      <p class="hint">Step 2 of 7 — Encryption key</p>
-      <p>✓ Generated an X25519 key pair in your browser. wowauth will encrypt every token it returns to this key.</p>
-      <p class="hint">The private key is never sent anywhere — it's only shown once, at the very end, for you to save.</p>
-      <div class="row">
-        <button class="secondary" id="back">Back</button>
-        <button id="next">Continue</button>
-      </div>
-    </div>
-  `;
-  wireBack(container, 1);
-  container.querySelector("#next")!.addEventListener("click", () => {
-    model.step = 3;
-    render(container);
-  });
-}
-
-function renderStep3(container: HTMLElement): void {
-  container.innerHTML = `
-    <div class="card">
-      <p class="hint">Step 3 of 7 — Choose Nmbrs scopes</p>
-      <p class="hint">${escapeHtml(NMBRS_MANDATORY_SCOPES.join(", "))} is always requested — wowauth needs it to refresh tokens.</p>
-      <div class="scope-list">
-        ${NMBRS_OPTIONAL_SCOPES.map(
-          (s) => `
-          <label class="scope-row">
-            <input type="checkbox" value="${escapeHtml(s)}" ${model.selectedScopes.has(s) ? "checked" : ""} />
-            ${escapeHtml(s)}
-          </label>`,
-        ).join("")}
-      </div>
-      <div class="row">
-        <button class="secondary" id="back">Back</button>
-        <button id="next">Continue</button>
-      </div>
+        <div class="row"><button type="submit">Continue</button></div>
+        <p class="error" id="step-error"></p>
+      </form>
     </div>
   `;
   container.querySelectorAll<HTMLInputElement>(".scope-list input").forEach((cb) => {
@@ -294,51 +145,64 @@ function renderStep3(container: HTMLElement): void {
       else model.selectedScopes.delete(cb.value);
     });
   });
-  wireBack(container, 2);
-  container.querySelector("#next")!.addEventListener("click", () => {
-    model.step = 4;
-    render(container);
+  const form = container.querySelector<HTMLFormElement>("#step-form")!;
+  const errorEl = container.querySelector<HTMLElement>("#step-error")!;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorEl.textContent = "";
+    const data = new FormData(form);
+    model.publicUrl = String(data.get("publicUrl") ?? "").trim().replace(/\/+$/, "") || DEFAULT_PUBLIC_URL;
+    model.subscriptionKey = String(data.get("subscriptionKey") ?? "").trim();
+    model.connectionName = String(data.get("connectionName") ?? "").trim() || "nmbrs";
+    const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    submitBtn.disabled = true;
+    try {
+      if (!model.publicKeyB64) {
+        try {
+          const kp = await generateX25519KeyPair();
+          model.publicKeyB64 = kp.publicKeyB64;
+          model.privateKeyB64 = kp.privateKeyB64;
+        } catch (err) {
+          throw new Error(
+            `Couldn't generate an encryption key in this browser: ${err instanceof Error ? err.message : String(err)}. Try a recent version of Chrome, Firefox, or Safari.`,
+          );
+        }
+      }
+      if (!model.appId) {
+        const scopes = [...NMBRS_MANDATORY_SCOPES, ...model.selectedScopes].join(" ");
+        model.redirectUri = `${model.publicUrl}/health`;
+        const app = await api.createApp({
+          name: model.connectionName,
+          client_id: "pending-nmbrs-client-id",
+          client_secret: "pending-nmbrs-secret",
+          auth_url: NMBRS_AUTH_URL,
+          token_url: NMBRS_TOKEN_URL,
+          redirect_url: "placeholder-set-in-the-next-step",
+          allowed_redirect_uris: [model.redirectUri],
+          scopes,
+          token_auth_method: "basic",
+          extra_auth_params: {},
+          extra_headers: {},
+          public_key: model.publicKeyB64,
+        });
+        model.appId = app.id;
+        await api.updateApp(app.id, { redirect_url: `${model.publicUrl}/${app.id}/oauth/callback` });
+      }
+      model.step = 2;
+      render(container);
+    } catch (err) {
+      reportError(err, errorEl);
+    } finally {
+      submitBtn.disabled = false;
+    }
   });
 }
 
-async function renderStep4(container: HTMLElement): Promise<void> {
-  container.innerHTML = `<div class="card"><p class="hint">Step 4 of 7 — Registering the connection with wowauth…</p></div>`;
-  try {
-    if (!model.appId) {
-      const scopes = [...NMBRS_MANDATORY_SCOPES, ...model.selectedScopes].join(" ");
-      model.redirectUri = `${model.publicUrl}/ui#/nmbrs/new`;
-      const app = await api.createApp({
-        name: model.connectionName,
-        client_id: "pending-nmbrs-client-id",
-        client_secret: "pending-nmbrs-secret",
-        auth_url: NMBRS_AUTH_URL,
-        token_url: NMBRS_TOKEN_URL,
-        redirect_url: "placeholder-set-in-the-next-step",
-        allowed_redirect_uris: [model.redirectUri],
-        scopes,
-        token_auth_method: "basic",
-        extra_auth_params: {},
-        extra_headers: {},
-        public_key: model.publicKeyB64,
-      });
-      model.appId = app.id;
-      await api.updateApp(app.id, { redirect_url: `${model.publicUrl}/${app.id}/oauth/callback` });
-    }
-  } catch (err) {
-    container.innerHTML = `<div class="card"><p class="error"></p><div class="row"><button class="secondary" id="back">Back</button></div></div>`;
-    reportError(err, container.querySelector(".error")!);
-    wireBack(container, 3);
-    return;
-  }
-  model.step = 5;
-  render(container);
-}
-
-function renderStep5(container: HTMLElement): void {
+function renderStep2(container: HTMLElement): void {
   const wowauthCallback = `${model.publicUrl}/${model.appId}/oauth/callback`;
   container.innerHTML = `
     <div class="card">
-      <p class="hint">Step 5 of 7 — Register the app in Nmbrs's own portal</p>
+      <p class="hint">Register the app in Nmbrs's own portal</p>
       <p>Open the <a href="${NMBRS_PARTNER_PORTAL_URL}" target="_blank" rel="noopener">Nmbrs partner portal</a> and create a new app with:</p>
       <table>
         <tbody>
@@ -364,7 +228,7 @@ function renderStep5(container: HTMLElement): void {
       </form>
     </div>
   `;
-  wireBack(container, 4);
+  wireBack(container, 1);
   const form = container.querySelector<HTMLFormElement>("#step-form")!;
   const errorEl = container.querySelector<HTMLElement>("#step-error")!;
   form.addEventListener("submit", async (e) => {
@@ -378,7 +242,7 @@ function renderStep5(container: HTMLElement): void {
         client_id: String(data.get("clientId") ?? "").trim(),
         client_secret: String(data.get("clientSecret") ?? "").trim(),
       });
-      model.step = 6;
+      model.step = 3;
       render(container);
     } catch (err) {
       reportError(err, errorEl);
@@ -388,77 +252,95 @@ function renderStep5(container: HTMLElement): void {
   });
 }
 
-function renderStep6(container: HTMLElement): void {
-  if (model.error) {
-    container.innerHTML = `
-      <div class="card">
-        <p class="hint">Step 6 of 7 — Log in to Nmbrs</p>
-        <p class="error">${escapeHtml(model.error)}</p>
-        <div class="row"><button class="secondary" id="back">Back</button></div>
-      </div>
-    `;
-    wireBack(container, 5);
-    return;
-  }
-  if (model.busy) {
-    container.innerHTML = `<div class="card"><p class="hint">Exchanging your Nmbrs login for a token…</p></div>`;
-    return;
-  }
+async function renderStep3(container: HTMLElement): Promise<void> {
+  // A fresh nonce/verifier every time this step is (re-)entered -- never
+  // reused across visits, and still in memory (no tab navigation happens)
+  // by the time the user pastes the redirect URL back.
+  model.oauthState = randomState();
+  model.pkceVerifier = randomPkceVerifier();
+  const challenge = await pkceChallenge(model.pkceVerifier);
+
+  const buildAuthorizeUrl = (): string => {
+    const authorizeParams = new URLSearchParams({
+      redirect_uri: model.redirectUri,
+      state: model.oauthState,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+    if (model.accountHint) authorizeParams.set("account_hint", model.accountHint);
+    return `${model.publicUrl}/${model.appId}/oauth/auth?${authorizeParams}`;
+  };
 
   container.innerHTML = `
     <div class="card">
-      <p class="hint">Step 6 of 7 — Log in to Nmbrs</p>
-      <p>You'll be sent to Nmbrs to log in and approve access, then brought straight back here.</p>
+      <p class="hint">Log in to Nmbrs</p>
+      <p>Open the link below in a new tab, log in to Nmbrs, and approve access. You'll land on wowauth's health-check page — copy the full URL from your browser's address bar and paste it below.</p>
       <label>A memorable label for this Nmbrs account (e.g. the company name)
         <span class="hint">Optional</span>
         <input type="text" id="account-hint" value="${escapeHtml(model.accountHint)}" />
       </label>
       <p class="hint">If Nmbrs shows an error page instead of a login page, go back and deselect the scope it's complaining about.</p>
+      <p><a id="go" href="${escapeHtml(buildAuthorizeUrl())}" target="_blank" rel="noopener"><code>${escapeHtml(buildAuthorizeUrl())}</code></a></p>
       <div class="row">
         <button class="secondary" id="back">Back</button>
-        <button id="go">Continue to Nmbrs →</button>
       </div>
-      <p class="error" id="step-error"></p>
+      <form id="step-form">
+        <label>Redirect URL
+          <span class="hint">The full URL you landed on (with ?code=... in it) after approving access at Nmbrs.</span>
+          <input type="text" name="redirectedUrl" required />
+        </label>
+        <div class="row"><button type="submit">Continue</button></div>
+        <p class="error" id="step-error"></p>
+      </form>
     </div>
   `;
-  wireBack(container, 5);
+  wireBack(container, 2);
   container.querySelector<HTMLInputElement>("#account-hint")!.addEventListener("input", (e) => {
     model.accountHint = (e.target as HTMLInputElement).value;
+    const url = buildAuthorizeUrl();
+    const link = container.querySelector<HTMLAnchorElement>("#go")!;
+    link.href = url;
+    link.innerHTML = `<code>${escapeHtml(url)}</code>`;
   });
-  container.querySelector("#go")!.addEventListener("click", async () => {
-    const errorEl = container.querySelector<HTMLElement>("#step-error")!;
+
+  const form = container.querySelector<HTMLFormElement>("#step-form")!;
+  const errorEl = container.querySelector<HTMLElement>("#step-error")!;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorEl.textContent = "";
+    const data = new FormData(form);
+    const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    submitBtn.disabled = true;
     try {
-      model.oauthState = randomState();
-      model.pkceVerifier = randomPkceVerifier();
-      const challenge = await pkceChallenge(model.pkceVerifier);
-
-      const authorizeParams = new URLSearchParams({
-        redirect_uri: model.redirectUri,
-        state: model.oauthState,
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-      });
-      if (model.accountHint) authorizeParams.set("account_hint", model.accountHint);
-
-      stashState({
-        appId: model.appId,
-        publicUrl: model.publicUrl,
-        connectionName: model.connectionName,
-        subscriptionKey: model.subscriptionKey,
-        publicKeyB64: model.publicKeyB64,
-        privateKeyB64: model.privateKeyB64,
-        redirectUri: model.redirectUri,
-        oauthState: model.oauthState,
-        pkceVerifier: model.pkceVerifier,
-      });
-      location.href = `${model.publicUrl}/${model.appId}/oauth/auth?${authorizeParams}`;
+      let parsed: URL;
+      try {
+        parsed = new URL(String(data.get("redirectedUrl") ?? "").trim());
+      } catch {
+        throw new Error("That doesn't look like a valid URL.");
+      }
+      const oauthError = parsed.searchParams.get("error");
+      if (oauthError) {
+        throw new Error(
+          `Nmbrs (via wowauth) reported an error: ${oauthError} ${parsed.searchParams.get("error_description") ?? ""}`,
+        );
+      }
+      if (parsed.searchParams.get("state") !== model.oauthState) {
+        throw new Error("The state in that URL didn't match what we sent -- aborting for safety.");
+      }
+      const code = parsed.searchParams.get("code");
+      if (!code) throw new Error("No authorization code was found in that URL.");
+      await finishAfterLogin(code);
+      model.step = 4;
+      render(container);
     } catch (err) {
       reportError(err, errorEl);
+    } finally {
+      submitBtn.disabled = false;
     }
   });
 }
 
-function renderStep7(container: HTMLElement): void {
+function renderStep4(container: HTMLElement): void {
   const configSecret = getConfigSecret() ?? "";
   const secrets = {
     specific: { subscription_key: model.subscriptionKey },

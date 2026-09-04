@@ -25,10 +25,18 @@ export async function renderHome(container: HTMLElement): Promise<void> {
 
   container.innerHTML = `
     <div class="card">
-      <div class="row" style="justify-content: space-between">
-        <h2>Apps</h2>
-        <a href="#/nmbrs/new"><button>+ Connect Nmbrs</button></a>
-      </div>
+      <h2>Wizards</h2>
+      <p class="hint">Set up a new OAuth connection.</p>
+      <ul class="known-apps">
+        <li>
+          <span>Nmbrs</span>
+          <a href="#/nmbrs/new"><button>Start</button></a>
+        </li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Apps</h2>
       ${
         apps.length
           ? `<table>

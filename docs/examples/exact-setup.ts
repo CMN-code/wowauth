@@ -613,7 +613,7 @@ re-run step 8 and paste the URL back in promptly.
   step(11, "Save these");
   const secretsPath = "./exact-secrets.json";
   const secrets = {
-    specific: { api_base: exactApiBase },
+    specific: { },
     wowauth: {
       name: connectionName,
       app_id: appId,
@@ -677,8 +677,7 @@ All done. Two commands to check this connection any time:
 curl -s "${adminUrl}/apps/${appId}/users/${userId}/token" \\
   -H "Authorization: Bearer ${configSecret}" | jq .
 
-2) Confirm the connection works right now (this token won't stay vali pd
-   forever):
+2) Confirm the connection works right now (this token won't stay valid forever):
 
 curl -s "${meUrl}" \\
   -H "Authorization: Bearer ${tokenResponse.access_token}" \\

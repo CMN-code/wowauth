@@ -18,7 +18,10 @@ type TokenClient =
 /// Builds a client for talking to the app's upstream token endpoint (used
 /// for both the code exchange and refreshes), with that app's configured
 /// auth style and extra headers applied to every request it sends.
-fn build_token_client(app: &App, cipher: &Cipher) -> Result<(TokenClient, reqwest::Client)> {
+fn build_token_client(
+    app: &App,
+    cipher: &Cipher,
+) -> Result<(TokenClient, QuirkNormalizingHttpClient)> {
     let client_secret_bytes = cipher
         .decrypt(&app.client_secret)
         .context("failed to decrypt stored client_secret")?;
@@ -62,7 +65,57 @@ fn build_token_client(app: &App, cipher: &Cipher) -> Result<(TokenClient, reqwes
         .build()
         .context("failed to build HTTP client")?;
 
-    Ok((client, http_client))
+    Ok((client, QuirkNormalizingHttpClient(http_client)))
+}
+
+/// Some upstream providers return `expires_in` as a quoted string instead
+/// of a JSON number (violates RFC 6749 §5.1), which breaks oauth2's strict
+/// `StandardTokenResponse` deserialization ("Failed to parse server
+/// response"). This wraps the reqwest client oauth2 sends requests through
+/// and normalizes that one field on the way back, before oauth2 parses the
+/// body — so we keep the crate for PKCE, auth-header handling, and
+/// RFC-compliant error parsing, and only patch the one non-conformant
+/// field. Responses that already send `expires_in` as a number pass
+/// through untouched.
+struct QuirkNormalizingHttpClient(reqwest::Client);
+
+impl<'c> oauth2::AsyncHttpClient<'c> for QuirkNormalizingHttpClient {
+    type Error = <reqwest::Client as oauth2::AsyncHttpClient<'c>>::Error;
+    type Future = std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<oauth2::HttpResponse, Self::Error>> + Send + 'c,
+        >,
+    >;
+
+    fn call(&'c self, request: oauth2::HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            let mut response = self.0.call(request).await?;
+            *response.body_mut() = normalize_expires_in(response.body());
+            Ok(response)
+        })
+    }
+}
+
+/// Rewrites a quoted `expires_in` (e.g. `"expires_in":"3600"`) to a JSON
+/// number in place. Leaves the body untouched if it isn't a JSON object, if
+/// `expires_in` is absent, or if it's already a number (the RFC-compliant
+/// case).
+fn normalize_expires_in(body: &[u8]) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.to_vec();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return body.to_vec();
+    };
+    let Some(fixed) = obj
+        .get("expires_in")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<u64>().ok())
+    else {
+        return body.to_vec();
+    };
+    obj.insert("expires_in".to_string(), fixed.into());
+    serde_json::to_vec(&value).unwrap_or_else(|_| body.to_vec())
 }
 
 pub struct UpstreamToken {
@@ -121,7 +174,7 @@ pub async fn exchange_code(
         .set_redirect_uri(Cow::Owned(redirect_uri))
         .request_async(&http_client)
         .await
-        .map_err(|err| anyhow::anyhow!("code exchange failed: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("code exchange failed: {err:?}"))?;
 
     Ok(token.into())
 }
