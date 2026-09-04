@@ -4,6 +4,7 @@ import { renderLogin } from "./views/login";
 import { renderHome } from "./views/home";
 import { renderAppDetail } from "./views/appDetail";
 import { renderNmbrsWizard } from "./views/nmbrsWizard";
+import { renderExactWizard } from "./views/exactWizard";
 
 const app = document.getElementById("app")!;
 const nav = document.getElementById("nav")!;
@@ -40,6 +41,11 @@ function route(): void {
 
   if (hash === "/nmbrs/new") {
     void renderNmbrsWizard(app);
+    return;
+  }
+
+  if (hash === "/exact/new") {
+    void renderExactWizard(app);
     return;
   }
 

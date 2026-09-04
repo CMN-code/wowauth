@@ -32,6 +32,10 @@ export async function renderHome(container: HTMLElement): Promise<void> {
           <span>Nmbrs</span>
           <a href="#/nmbrs/new"><button>Start</button></a>
         </li>
+        <li>
+          <span>Exact Online</span>
+          <a href="#/exact/new"><button>Start</button></a>
+        </li>
       </ul>
     </div>
 
