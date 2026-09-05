@@ -6,6 +6,7 @@ use poem::web::Data;
 use poem_openapi::param::Path;
 use poem_openapi::payload::{Json, PlainText};
 use poem_openapi::{ApiResponse, Object, OpenApi};
+use tracing::{error, info, warn};
 
 use crate::AppState;
 use crate::auth::AdminAuth;
@@ -106,7 +107,7 @@ impl From<App> for AppView {
     fn from(app: App) -> Self {
         let allowed_redirect_uris = serde_json::from_str(&app.allowed_redirect_uris)
             .unwrap_or_else(|err| {
-                tracing::warn!(
+                warn!(
                     app_id = %app.id,
                     error = %err,
                     "app has malformed allowed_redirect_uris in db, treating as empty"
@@ -115,7 +116,7 @@ impl From<App> for AppView {
             });
         let extra_auth_params =
             serde_json::from_str(&app.extra_auth_params).unwrap_or_else(|err| {
-                tracing::warn!(
+                warn!(
                     app_id = %app.id,
                     error = %err,
                     "app has malformed extra_auth_params in db, treating as empty"
@@ -123,7 +124,7 @@ impl From<App> for AppView {
                 HashMap::new()
             });
         let extra_headers = serde_json::from_str(&app.extra_headers).unwrap_or_else(|err| {
-            tracing::warn!(
+            warn!(
                 app_id = %app.id,
                 error = %err,
                 "app has malformed extra_headers in db, treating as empty"
@@ -501,25 +502,26 @@ impl Api {
         let is_expired = token.expires_at.is_some_and(|expires_at| expires_at <= now);
 
         let (access_token_plaintext, expires_at) = if is_expired {
+            info!(app_id = %app_id.0, user_id = %user_id.0, "token expired");
             let Some(refresh_token_enc) = &token.refresh_token else {
-                tracing::warn!(app_id = %app_id.0, user_id = %user_id.0, "user needs reauth: token expired with no refresh token on file");
+                warn!(app_id = %app_id.0, user_id = %user_id.0, "user needs reauth: token expired with no refresh token on file");
                 return Ok(UniversalResponse::Conflict(PlainText(
                     "needs reauth".to_string(),
                 )));
             };
             let refresh_token_plaintext = state.cipher.decrypt(refresh_token_enc).map_err(|e| {
-                tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored refresh token");
+                error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored refresh token");
                 internal_error(e)
             })?;
             let refresh_token = String::from_utf8(refresh_token_plaintext).map_err(|e| {
-                tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "decrypted refresh token was not utf8");
+                error!(app_id = %app_id.0, user_id = %user_id.0, "decrypted refresh token was not utf8");
                 poem::error::InternalServerError(e)
             })?;
 
             let refreshed = match oauth_client::refresh(&app, &state.cipher, &refresh_token).await {
                 Ok(refreshed) => refreshed,
                 Err(err) => {
-                    tracing::error!(app_id = %app_id.0, user_id = %user_id.0, error = %err, "unable to refresh token from provider");
+                    error!(app_id = %app_id.0, user_id = %user_id.0, error = %err, "unable to refresh token from provider");
                     return Ok(UniversalResponse::Conflict(PlainText(
                         "unable to refresh token from provider".to_string(),
                     )));
@@ -538,7 +540,7 @@ impl Api {
                 .as_ref()
                 .map(|t| state.cipher.encrypt(t.as_bytes()))
                 .or_else(|| {
-                    tracing::warn!(app_id = %app_id.0, user_id = %user_id.0, "upstream did not rotate the refresh token, reusing existing one");
+                    warn!(app_id = %app_id.0, user_id = %user_id.0, "upstream did not rotate the refresh token, reusing existing one");
                     token.refresh_token.clone()
                 });
 
@@ -554,7 +556,7 @@ impl Api {
             (refreshed.access_token.into_bytes(), updated.expires_at)
         } else {
             let plaintext = state.cipher.decrypt(&token.access_token).map_err(|e| {
-                tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored access token");
+                error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored access token");
                 internal_error(e)
             })?;
             (plaintext, token.expires_at)
@@ -564,7 +566,7 @@ impl Api {
         let sealed =
             wowauth_token_seal::seal(&app.public_key, &access_token_plaintext, aad.as_bytes())
                 .map_err(|e| {
-                    tracing::error!(app_id = %app_id.0, user_id = %user_id.0, "unable to seal access token to app public key");
+                    error!(app_id = %app_id.0, user_id = %user_id.0, "unable to seal access token to app public key");
                     internal_error(e)
                 })?;
 

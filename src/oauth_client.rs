@@ -11,6 +11,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
+use tracing::info;
 
 type TokenClient =
     BasicClient<EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
@@ -145,6 +146,7 @@ where
 /// provider — this is the "wowauth takes care of refreshing your tokens"
 /// behavior.
 pub async fn refresh(app: &App, cipher: &Cipher, refresh_token: &str) -> Result<UpstreamToken> {
+    info!(app_id = %app.id, "refreshing token");
     let (client, http_client) = build_token_client(app, cipher)?;
 
     let token = client

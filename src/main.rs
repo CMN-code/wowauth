@@ -56,6 +56,9 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        .with_target(false)
+        .with_file(true)
+        .with_line_number(true)
         .init();
 
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "wowauth.db".to_string());
