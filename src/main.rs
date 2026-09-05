@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         cipher,
         config_secret,
         public_base_url,
+        refresh_locks: Default::default(),
     };
 
     let api_service = OpenApiService::new(

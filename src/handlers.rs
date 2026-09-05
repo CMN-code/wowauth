@@ -502,58 +502,90 @@ impl Api {
         let is_expired = token.expires_at.is_some_and(|expires_at| expires_at <= now);
 
         let (access_token_plaintext, expires_at) = if is_expired {
-            info!(app_id = %app_id.0, user_id = %user_id.0, "token expired");
-            let Some(refresh_token_enc) = &token.refresh_token else {
-                warn!(app_id = %app_id.0, user_id = %user_id.0, "user needs reauth: token expired with no refresh token on file");
-                return Ok(UniversalResponse::Conflict(PlainText(
-                    "needs reauth".to_string(),
-                )));
-            };
-            let refresh_token_plaintext = state.cipher.decrypt(refresh_token_enc).map_err(|e| {
-                error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored refresh token");
-                internal_error(e)
-            })?;
-            let refresh_token = String::from_utf8(refresh_token_plaintext).map_err(|e| {
-                error!(app_id = %app_id.0, user_id = %user_id.0, "decrypted refresh token was not utf8");
-                poem::error::InternalServerError(e)
-            })?;
+            // Serialize refreshes per (app_id, user_id): providers like
+            // Exact Online invalidate a refresh token the instant it's
+            // used, so a second concurrent caller racing the same stored
+            // token upstream would get rejected and leave the row stuck
+            // with a dead token forever. Wait for any in-flight refresh...
+            let _refresh_lock = state.refresh_lock(&app_id.0, &user_id.0).await;
 
-            let refreshed = match oauth_client::refresh(&app, &state.cipher, &refresh_token).await {
-                Ok(refreshed) => refreshed,
-                Err(err) => {
-                    error!(app_id = %app_id.0, user_id = %user_id.0, error = %err, "unable to refresh token from provider");
+            // ...then re-read: whoever held the lock before us may have
+            // already refreshed and saved a new row, in which case there's
+            // nothing left to do here.
+            let Some(token) = repository::get_token(&mut conn, &app_id.0, &user_id.0)
+                .map_err(poem::error::InternalServerError)?
+            else {
+                return Ok(UniversalResponse::NotFound(PlainText(format!(
+                    "user {} does not exist",
+                    user_id.0
+                ))));
+            };
+            let now = Utc::now().naive_utc();
+            let still_expired = token.expires_at.is_some_and(|expires_at| expires_at <= now);
+
+            if !still_expired {
+                let plaintext = state.cipher.decrypt(&token.access_token).map_err(|e| {
+                    error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored access token");
+                    internal_error(e)
+                })?;
+                (plaintext, token.expires_at)
+            } else {
+                info!(app_id = %app_id.0, user_id = %user_id.0, "token expired");
+                let Some(refresh_token_enc) = &token.refresh_token else {
+                    warn!(app_id = %app_id.0, user_id = %user_id.0, "user needs reauth: token expired with no refresh token on file");
                     return Ok(UniversalResponse::Conflict(PlainText(
-                        "unable to refresh token from provider".to_string(),
+                        "needs reauth".to_string(),
                     )));
-                }
-            };
+                };
+                let refresh_token_plaintext =
+                    state.cipher.decrypt(refresh_token_enc).map_err(|e| {
+                        error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored refresh token");
+                        internal_error(e)
+                    })?;
+                let refresh_token = String::from_utf8(refresh_token_plaintext).map_err(|e| {
+                    error!(app_id = %app_id.0, user_id = %user_id.0, "decrypted refresh token was not utf8");
+                    poem::error::InternalServerError(e)
+                })?;
 
-            let new_expires_at = refreshed
-                .expires_in
-                .and_then(|d| chrono::Duration::from_std(d).ok())
-                .map(|d| now + d);
+                let refreshed = match oauth_client::refresh(&app, &state.cipher, &refresh_token)
+                    .await
+                {
+                    Ok(refreshed) => refreshed,
+                    Err(err) => {
+                        error!(app_id = %app_id.0, user_id = %user_id.0, error = %err, "unable to refresh token from provider");
+                        return Ok(UniversalResponse::Conflict(PlainText(
+                            "unable to refresh token from provider".to_string(),
+                        )));
+                    }
+                };
 
-            // Providers don't always rotate the refresh token; keep the old
-            // one if a new one wasn't issued.
-            let new_refresh_token_enc = refreshed
-                .refresh_token
-                .as_ref()
-                .map(|t| state.cipher.encrypt(t.as_bytes()))
-                .or_else(|| {
-                    warn!(app_id = %app_id.0, user_id = %user_id.0, "upstream did not rotate the refresh token, reusing existing one");
-                    token.refresh_token.clone()
-                });
+                let new_expires_at = refreshed
+                    .expires_in
+                    .and_then(|d| chrono::Duration::from_std(d).ok())
+                    .map(|d| now + d);
 
-            let updated = repository::save_refreshed_token(
-                &mut conn,
-                &token.id,
-                state.cipher.encrypt(refreshed.access_token.as_bytes()),
-                new_refresh_token_enc,
-                new_expires_at,
-            )
-            .map_err(poem::error::InternalServerError)?;
+                // Providers don't always rotate the refresh token; keep the old
+                // one if a new one wasn't issued.
+                let new_refresh_token_enc = refreshed
+                    .refresh_token
+                    .as_ref()
+                    .map(|t| state.cipher.encrypt(t.as_bytes()))
+                    .or_else(|| {
+                        warn!(app_id = %app_id.0, user_id = %user_id.0, "upstream did not rotate the refresh token, reusing existing one");
+                        token.refresh_token.clone()
+                    });
 
-            (refreshed.access_token.into_bytes(), updated.expires_at)
+                let updated = repository::save_refreshed_token(
+                    &mut conn,
+                    &token.id,
+                    state.cipher.encrypt(refreshed.access_token.as_bytes()),
+                    new_refresh_token_enc,
+                    new_expires_at,
+                )
+                .map_err(poem::error::InternalServerError)?;
+
+                (refreshed.access_token.into_bytes(), updated.expires_at)
+            }
         } else {
             let plaintext = state.cipher.decrypt(&token.access_token).map_err(|e| {
                 error!(app_id = %app_id.0, user_id = %user_id.0, "unable to decrypt stored access token");
