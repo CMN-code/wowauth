@@ -5,10 +5,12 @@ export function getConfigSecret(): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+const SESSION_TTL_SECONDS = 24 * 60 * 60;
+
 export function setConfigSecret(secret: string): void {
-  // Set on / so it's attached to every request the SPA makes; a year is
-  // long enough that admins aren't re-pasting the secret every visit.
-  document.cookie = `${COOKIE_NAME}=${encodeURIComponent(secret)}; path=/; max-age=31536000; SameSite=Strict`;
+  // Set on / so it's attached to every request the SPA makes; expires after
+  // 24h so the admin has to re-enter the secret periodically.
+  document.cookie = `${COOKIE_NAME}=${encodeURIComponent(secret)}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Strict`;
 }
 
 export function clearConfigSecret(): void {
