@@ -182,7 +182,7 @@ function renderStep2(container: HTMLElement): void {
   container.innerHTML = `
     <div class="card">
       <p class="hint">Register the app in Exact's App Center</p>
-      <p>Open <a href="${EXACT_APP_CENTER_URL}" target="_blank" rel="noopener">start.exactonline.nl</a> and sign in, then create a new app (My Apps → New App) with:</p>
+      <p>Open <a href="${EXACT_APP_CENTER_URL}" target="_blank" rel="noopener">start.exactonline.nl</a> and sign in. Navigate to "Import/Export" -> "App-registraties" and create a new integration with redirect url:</p>
       <table>
         <tbody>
           <tr><th>App name</th><td><code>${escapeHtml(model.connectionName)}</code></td></tr>
